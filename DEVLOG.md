@@ -73,3 +73,79 @@ Recuperar el proyecto Mi Presupuesto después de la pérdida total del disco dur
 Capa de servicios. Migrar las tres dependencias de `financial_engine` (`meta_inteligente_engine`, `notification_service`, `claude_service`) para que consuman el brain en lugar de instanciar sus propios engines. Implementar la integración del contador de versión en `master_financial_brain`. Aplicar las tres correcciones de `.clamp()` pendientes que viven en la capa de servicios.
 
 ---
+
+## 2026-06-10 — Capa Services completa, primer push público, cierre de la deuda arquitectónica
+
+**Tiempo invertido:** aproximadamente 5 horas
+**Fase:** Reconstrucción de Services + publicación + decisiones de producto
+
+### Objetivo
+
+Cerrar las dos piezas que quedaban pendientes para tener una base de proyecto profesional: completar la capa Services con todas sus migraciones, y publicar la primera versión del proyecto en GitHub.
+
+### Trabajo realizado
+
+1. **Push del repo a GitHub.** El proyecto pasó de ser un commit local en mi disco a un repo público en `github.com/juan-macias1/mi_presupuesto`. Autenticación vía Git Credential Manager con OAuth. El primer commit del día anterior (`9f5a5cd`) quedó publicado con el README renderizado como página principal.
+
+2. **Capa Services completada en tres tandas** según riesgo y cantidad de cambio:
+   - Tanda 1 (Grupo A — limpios): `distribution_engine`, `chart_engine`, `category_suggestion_service`, `deuda_engine`. Solo dos correcciones de `.clamp()` en `deuda_engine`.
+   - Tanda 2 (Grupo C — el cerebro): `master_financial_brain` con la integración del contador de versión para invalidación automática de caché, más una corrección de `.clamp()` en la proyección, más tres limpiezas de `unnecessary_cast`.
+   - Tanda 3 (Grupo B — migraciones): `meta_inteligente_engine`, `notification_service`, `claude_service`. Los tres dejaron de depender de `FinancialEngine` y ahora consumen `MasterFinancialResult` del brain.
+
+3. **Cierre de la deuda arquitectónica.** `financial_engine.dart` no existe en el proyecto. Toda la lógica de análisis financiero pasa por una única ruta: el brain. Eliminada la posibilidad de inconsistencias entre dos calculadoras paralelas.
+
+4. **Refactor de `ClaudeService`.** Se eliminó el método `_construirContextoFinanciero` por completo (cerca de 60 líneas) porque duplicaba el contexto que el brain ya genera en `_construirContextoIA`. La firma de `enviarMensaje` ahora recibe `MasterFinancialResult` en lugar de tres modelos sueltos. La API key se lee del archivo `.env` con `flutter_dotenv`, nunca hardcoded.
+
+5. **Configuración de dependencias.** Se agregaron al `pubspec.yaml` las seis dependencias requeridas por los servicios: `sqflite`, `path`, `http`, `flutter_dotenv`, `flutter_local_notifications`, `timezone`. `flutter pub get` resolvió todas sin conflictos.
+
+6. **Configuración de `main.dart` para dotenv.** Modificado para hacer `WidgetsFlutterBinding.ensureInitialized()` y `await dotenv.load(fileName: ".env")` antes de `runApp`. Esto permite que `dotenv.env['ANTHROPIC_API_KEY']` funcione en cualquier punto del código.
+
+7. **Activación del Modo Desarrollador en Windows.** Necesario para que Flutter pueda crear symlinks de plugins sin permisos de admin. Trivial pero crítico para la siguiente sesión cuando corra `flutter run`.
+
+8. **Conversación de producto sobre diseño de comportamiento.** Larga discusión sobre cómo cerrar la brecha intención-acción (knowing-doing gap). Se identificaron ocho principios concretos a incorporar a futuro (pre-commitment, loss framing, identidad sobre meta, fricción asimétrica, feedback inmediato, visualización del yo futuro, implementation intentions, rituales de cierre) y dos categorías a evitar (shame/guilt, falsa urgencia). Se acordó documentarlos en un futuro `BEHAVIOR_DESIGN.md`.
+
+9. **Confirmación del foco "debt-first".** Se identificaron seis puntos donde la deuda debería pesar más en la experiencia del producto: dashboard en modo ataque visualmente urgente, cada movimiento muestra impacto en fecha de libertad, chat IA empieza recordando el modo, score ponderado por modo, notificaciones sesgadas a deuda en modo ataque, sección "velocidad de pago" con escenarios comparativos.
+
+10. **Segundo commit del proyecto** (`7082432`) con la capa Services completa y push al repo público. Tercer commit en preparación para `LEARNING_PATH.md` y esta entrada del DEVLOG.
+
+### Lo que funcionó
+
+- La estrategia de tres tandas (limpios → cerebro → migraciones) para Services permitió mantener concentración: cada tanda tenía su propia lógica de cambio, sin mezclar fixes triviales con refactors estructurales.
+- Usar un script Python para aplicar las cinco modificaciones al brain, en lugar de sed encadenados. Más legible, menos propenso a errores, fácil de verificar.
+- Verificar los imports de los servicios antes de generar los archivos. Detecté que todos usaban `../db/` y `../models/`, lo cual confirmó que no había paths que arreglar al moverlos a `lib/services/`.
+- El método auxiliar `_calcularCambioGastosMesAnterior` en `notification_service`. Decidí mantener este cálculo específico local al service en lugar de exponerlo en `MasterFinancialResult`. Aplicación práctica del principio de cohesión: si un dato lo necesita una sola pantalla, no lo expongas globalmente.
+
+### Lo que falló y cómo se resolvió
+
+- La integración del contador de versión en el brain requirió cinco modificaciones distintas en lugares específicos del archivo. Hacerlo con sed habría sido frágil. Lo resolví con un script Python con `assert` en cada reemplazo para garantizar que las búsquedas matchearan.
+- Apareció un warning sobre symlinks de Windows después de `flutter pub get`. No bloqueaba el commit pero sí iba a bloquear el próximo `flutter run`. Resuelto activando el Modo Desarrollador en Configuración.
+
+### Lecciones aprendidas
+
+- **Niveles del analizador de Dart**: `error` (rojo, bloqueante), `warning` (amarillo, no bloqueante pero serio), `info` (sugerencia de estilo, opcional). Aprender a leer y filtrar cada categoría es parte del oficio. Hoy bajé de 20 issues a 17 limpiando solo los warnings, dejando los `info` de estilo para un commit separado tipo `chore:`.
+- **Single source of truth no es teoría académica.** Cuando se cierra (como hoy con `financial_engine` eliminado), de pronto el código tiene menos lugares donde un bug puede esconderse. Es tangible.
+- **El refactor más limpio elimina código en lugar de agregarlo.** `ClaudeService` bajó de 159 líneas a cerca de 110 al sacar `_construirContextoFinanciero`. Menos código de mantener, menos lugares donde algo puede divergir, misma funcionalidad.
+- **Diseño de comportamiento no es manipulación.** La distinción ética importa. La primera es uno contratando una herramienta para cumplir lo que ya decidió. La segunda es alguien externo empujándolo contra sus intereses.
+- **Externalizar conocimiento al repo es backup conceptual.** La conversación con Claude es ephemeral; los archivos del repo son durables. Cada decisión arquitectónica importante debería terminar materializada en código con comentarios, en un DEVLOG entry, o en un documento del repo.
+
+### Métricas
+
+- Archivos creados o modificados: 12 (8 servicios nuevos, brain reformado, `main.dart`, `pubspec.yaml`, `pubspec.lock`)
+- Líneas insertadas en el segundo commit: 2,491
+- Bugs corregidos: 4 (todos `.clamp()` mal tipados)
+- Warnings cerrados: 3 (`unnecessary_cast`)
+- Estado de `flutter analyze`: 0 errores, 0 warnings, 17 `info` (style-only)
+- Estado del proyecto: capas DB, Models y Services reconstruidas y limpias. Repo público en GitHub con 2 commits. Aún no compila a un app funcional porque faltan las pantallas (capa Screens) y los widgets.
+- Commits del día: `7082432` — `feat(services): complete services layer with brain as single source of truth`.
+
+### Próximos pasos
+
+- Capa Screens: migrar el `main.dart` original (1770 líneas) y reconstruir las pantallas. Tres faltan completamente del backup (`metas_screen`, `chat_ia_screen`) y dos widgets (`dashboard_score_card`, `dashboard_risk_chip`) más un helper (`export_helper`).
+- Capa Widgets: `dashboard_charts_card`, `dashboard_section_card`, `meta_card`.
+- Configuración Android para `flutter_local_notifications` (permisos en AndroidManifest).
+- Activar la API key cuando se procese el pago de Anthropic.
+- Implementar el principio "debt-first" cuando llegue la migración de screens.
+- Documentar formalmente los principios de diseño de comportamiento en `BEHAVIOR_DESIGN.md`.
+- Primer post en LinkedIn contando el arco del proyecto.
+
+---
