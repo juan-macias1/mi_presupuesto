@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'theme/app_colors.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:intl/intl.dart';
@@ -13,6 +15,13 @@ import 'screens/deudas_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Bloquear orientación en vertical. Una app de finanzas no necesita
+  // landscape; bloquearlo elimina toda una clase de bugs de layout.
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+    DeviceOrientation.portraitDown,
+  ]);
 
   // Cargar variables de entorno (.env contiene ANTHROPIC_API_KEY).
   // Si falla, seguimos arrancando — el chat IA mostrará error claro
@@ -63,7 +72,7 @@ class MyApp extends StatelessWidget {
 
       theme: ThemeData(
         useMaterial3: true,
-        colorSchemeSeed: const Color(0xFF00BFA5),
+        colorSchemeSeed: AppColors.primary,
         fontFamily: 'Roboto',
         appBarTheme: const AppBarTheme(
           backgroundColor: Colors.white,
@@ -98,7 +107,7 @@ class MyApp extends StatelessWidget {
           ),
         ),
         floatingActionButtonTheme: const FloatingActionButtonThemeData(
-          backgroundColor: Color(0xFFB2DFDB),
+          backgroundColor: AppColors.primaryLight,
           foregroundColor: Colors.black,
         ),
       ),
@@ -1686,7 +1695,6 @@ class _MyHomePageState extends State<MyHomePage> {
 
       floatingActionButton: FloatingActionButton(
         onPressed: _mostrarFormulario,
-        backgroundColor: const Color.fromARGB(255, 189, 244, 239),
         child: const Icon(Icons.add, color: Colors.black),
       ),
     );
