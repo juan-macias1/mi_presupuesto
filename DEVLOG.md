@@ -149,3 +149,158 @@ Cerrar las dos piezas que quedaban pendientes para tener una base de proyecto pr
 - Primer post en LinkedIn contando el arco del proyecto.
 
 ---
+
+## 2026-06-11 — Capa UI completa, primer build real en el dispositivo
+
+**Tiempo invertido:** aproximadamente 6 horas
+**Fase:** Reconstrucción de Widgets + Screens + main.dart, primer `flutter run` exitoso
+
+### Objetivo
+
+Cerrar la capa de interfaz visual del app: widgets, pantallas, main.dart, helpers. Conectar todo lo construido en las capas previas a una UI funcional. Hacer correr el app por primera vez sobre el dispositivo físico, validando el pipeline completo de la arquitectura.
+
+### Trabajo realizado
+
+1. **Tanda Widgets (Grupo A — limpios):** 5 archivos colocados en `lib/widgets/`.
+   - Migrados con cambios mínimos: `dashboard_charts_card.dart` (con un `.clamp()` corregido en el progress indicator), `dashboard_section_card.dart` (sin cambios), `meta_card.dart` (con un `.clamp()` corregido en el cálculo de progreso).
+   - Reconstruidos desde cero: `dashboard_score_card.dart` (muestra el score 0-100 con cuatro rangos de color semánticos), `dashboard_risk_chip.dart` (renderiza un FinancialRisk como chip de Material con icono según severidad). Diseño base limpio, pensado para iterar en la fase de UX.
+
+2. **Tanda Screens 1 — `deudas_screen.dart`:** migrado con dos correcciones. Un `.clamp()` agregado con `.toDouble()`. Eliminado el campo `_pagoDisponible` que estaba declarado pero nunca leído — dead state. Patrón ya conocido del DEVLOG anterior.
+
+3. **Tanda Screens 2 — `chat_ia_screen.dart` y `metas_screen.dart` reconstruidos desde cero.**
+   - `chat_ia_screen.dart` (~272 líneas): interfaz de chat con Fin, recibe `MasterFinancialResult`, lo pasa a `ClaudeService.enviarMensaje`. Burbujas asimétricas tipo WhatsApp (usuario azul a la derecha, asistente gris a la izquierda). Auto-scroll vía `WidgetsBinding.addPostFrameCallback`. Mensaje de bienvenida inicial. `if (!mounted) return;` después del `await` para evitar errores cross-async.
+   - `metas_screen.dart` (~453 líneas): CRUD completo de metas. Carga del DB + consulta al brain para el análisis inteligente. Bottom sheet modal para crear/editar. Confirmación de dialog para eliminar. Empty state amigable. Header con resumen agregado. RefreshIndicator para pull-to-refresh.
+
+4. **Tanda Screens 3 — `financial_dashboard_screen.dart`:** migrado con cuatro tipos de cambio.
+   - Normalización de 20 imports de estilo `package:mi_presupuesto/...` a estilo relativo `../...`, consistente con el resto del proyecto.
+   - Fix del path: `screens/deuda_screen.dart` (singular, typo del original) → `screens/deudas_screen.dart` (plural, nombre real del archivo).
+   - Fix de API mismatch detectado por el compilador: `DashboardScoreCard(analysis: result.analysis)` → `DashboardScoreCard(score: result.scoreFinanciero)`. Mismo patrón con `DashboardRiskChip(nivel: ...)` → `DashboardRiskChip(risk: ...)`.
+   - Fix de otra API mismatch: `ChatIAScreen(analysis:, distribucion:, proyeccion:)` (la firma vieja) → `ChatIAScreen(result: ...)` (la firma nueva tras el refactor del día anterior de ClaudeService).
+   - Removidos dos imports no usados (`financial_analysis.dart`, `plan_pago.dart`) — consecuencia del refactor: el dashboard ya accede via `result.X` y no necesita los tipos directamente.
+
+5. **Tanda Helpers — 2 stubs documentados.**
+   - `helpers/export_helper.dart`: stub que no hace nada en runtime, pero su comentario de cabecera documenta los 5 pasos necesarios para implementarlo realmente (path_provider, query de DB, generar CSV, escribir archivo, retornar path).
+   - `services/google_drive_service.dart`: stub similar, retorna un string informativo. Comentario documenta los 6 pasos: proyecto en Google Cloud Console, OAuth, paquetes googleapis, integración con ExportHelper, manejo de errores, mensajes reales.
+   - Decisión consciente: no implementar estas funciones ahora. Drive en particular requiere ~4-6 horas solo de setup (OAuth, credenciales). Stage 1 no las necesita; Stage 2 las implementará.
+
+6. **Migración de `main.dart` (1770 → 1767 líneas):**
+   - Imports normalizados (paths relativos), fix del `screens/deuda_screen.dart`.
+   - Agregado import de `flutter_dotenv` y `flutter_localizations`.
+   - `main()` reescrito: ahora es `Future<void>`, envuelve `dotenv.load` en try/catch para no romper el arranque si el archivo falla, cambia el locale de `es_ES` a `es_CO` (España → Colombia), envuelve las notificaciones también en try/catch.
+   - `MaterialApp` con `localizationsDelegates` (Material/Widgets/Cupertino), `supportedLocales` y `locale: Locale('es', 'CO')`. Sin esto, el DatePicker ignora el locale aunque le pasen `Locale('es', 'CO')`.
+   - Removido método dead code `_mostrarOpcionesMovimiento` (37 líneas, nadie lo llamaba).
+   - Tres `value:` deprecados en `DropdownButtonFormField` migrados a `initialValue:` (el primero será error en futuras versiones de Flutter).
+   - Un `.clamp()` corregido con `.toDouble()`.
+
+7. **Configuración Android — `android/app/build.gradle.kts`:**
+   - Habilitado `isCoreLibraryDesugaringEnabled = true` en `compileOptions`.
+   - Agregado bloque `dependencies` con `coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")`.
+   - Necesario porque `flutter_local_notifications` usa APIs de Java 8+ (como `java.time`) que no existen nativamente en Android viejo. Gradle las traduce ("desugar") a equivalentes compatibles.
+
+8. **Configuración `pubspec.yaml`:**
+   - Agregadas dependencias `fl_chart: ^0.69.0` e `intl: ^0.19.0`.
+   - Conflict detectado al hacer `flutter pub get`: `flutter_localizations` exige `intl 0.20.2` exacto. Resuelto bumpeando nuestro pin a `intl: ^0.20.2`.
+   - Agregada dependencia `flutter_localizations: sdk: flutter`.
+
+9. **Primer `flutter run` exitoso en el dispositivo.** El app boot, navega entre pantallas, muestra empty states correctos. Estados verificados visualmente:
+   - Pantalla principal con balance "0 $" y empty state del buzón.
+   - Mis Metas con empty state y CTA verde.
+   - Mis Deudas con empty state, FAB rojo y CTA rojo — **el "debt-first design" emergiendo naturalmente sin haberlo programado todavía**.
+   - Dashboard en modo `sinDatos` (el MasterFinancialBrain detectó la ausencia de movimientos).
+   - Chat con Fin saludando con el mensaje inicial pre-programado.
+
+### Lo que funcionó
+
+- La estrategia de tandas por nivel de dependencia: widgets primero (sin deps internas), luego screens simples, después screens complejos, helpers, main al final. Cada tanda compila independiente.
+- Verificar los imports antes de mover archivos: detectar el typo de `deuda_screen` y el API mismatch del chat ANTES de tirar `flutter run` ahorró tiempo de debugging downstream.
+- Usar Python para los refactors complejos en el main.dart en lugar de sed encadenados.
+- Stubs documentados en lugar de implementación incompleta. El comentario de cabecera de cada stub vale más que el código actual: dice exactamente qué hacer cuando llegue el momento.
+
+### Lo que falló y cómo se resolvió
+
+- **Refactor cross-file incompleto del día anterior:** el dashboard llamaba a `ChatIAScreen` con la API vieja (3 modelos separados) cuando yo había migrado el chat a recibir un `MasterFinancialResult`. El compilador lo detectó como 4 errores rojos. Resuelto actualizando una línea del dashboard.
+- **Conflict de versiones `flutter_localizations` vs `intl`:** el SDK de Flutter pinea `intl 0.20.2` exacto. Nuestro `^0.19.0` no satisfacía. Resuelto bumpeando a `^0.20.2`.
+- **Core library desugaring no habilitado:** `flutter run` fallaba con un error de AAR metadata pidiendo desugaring. Resuelto agregando 2 cambios en `android/app/build.gradle.kts`.
+
+### Lecciones aprendidas
+
+- **Refactor cross-file requiere actualizar TODOS los consumidores.** Si dejás uno desactualizado, el compilador te lo encuentra — gracias a tipos fuertes. Argumento clásico a favor de lenguajes tipados frente a dinámicos: en Python o JavaScript sin tipos, este error solo aparecería al EJECUTAR la pantalla del chat, mucho más tarde y más caro.
+- **Cuando una dependencia restringe el rango de otra que ya tenés, el resolver de Dart es muy claro.** El mensaje "Try `flutter pub add intl:^0.20.2`" indicó exactamente la solución. Aprender a leer los mensajes del resolver es parte del oficio.
+- **Configuración nativa de Android es real.** `flutter_local_notifications` requiere desugaring; otros paquetes pueden requerir permisos en AndroidManifest, claves API, etc. Estos no son bugs del proyecto — son requisitos del ecosistema. Hay que aprender a googlearlos rápido cuando aparecen.
+- **El "debt-first design" emergió solo en la pantalla de deudas.** El rojo del FAB y del CTA contrastan con el verde del resto del app, y eso ya transmite la urgencia que quiero. Buen recordatorio: los principios de diseño no requieren toneladas de código, a veces se aplican con un solo color elegido bien.
+
+### Métricas
+
+- Archivos creados o modificados: 16
+- Líneas insertadas (commit): 5,781
+- Líneas eliminadas (commit): 88
+- Bugs corregidos: 8 (4 errores reales del API mismatch del dashboard, 3 `value:` deprecados a `initialValue:`, 1 dead code removido)
+- Warnings cerrados: 1 (unused element `_mostrarOpcionesMovimiento`)
+- Estado de `flutter analyze` al cierre: 0 errores, 0 warnings, 33 `info` (style-only)
+- Primer build end-to-end exitoso en dispositivo físico
+
+### Próximos pasos
+
+- Fix del permiso de `requestExactAlarmsPermission` innecesario en `notification_service`.
+- Validar el flujo de creación de movimientos con datos reales.
+- Documentar formalmente los principios de diseño de comportamiento en `BEHAVIOR_DESIGN.md`.
+- Eventualmente: probar Fin con la API key activa de Anthropic cuando se procese el pago.
+
+---
+
+## 2026-06-12 — Fix de notificaciones, decisión estratégica sobre alcance, cierre del commit grande
+
+**Tiempo invertido:** aproximadamente 3 horas
+**Fase:** Pulido + conversación de producto + cierre del trabajo de ayer
+
+### Objetivo
+
+Resolver un issue de UX detectado al usar el app en el dispositivo (Android pide un permiso de alarmas exactas innecesariamente), tomar una decisión estratégica sobre el alcance del producto que apareció caminando, y cerrar el trabajo del día anterior con un commit consolidado y su push.
+
+### Trabajo realizado
+
+1. **Diagnóstico del prompt de Android "Allow setting alarms and reminders".** Al arrancar el app por primera vez, el sistema operativo abre una pantalla de configuración pidiendo permiso para alarmas exactas. Análisis: el método `inicializar()` de `NotificationService` llama a `requestExactAlarmsPermission()`, pero la única notificación programada (el recordatorio diario) usa `AndroidScheduleMode.inexact`. Permiso solicitado innecesariamente.
+
+2. **Fix de una línea.** Removida `await androidPlugin?.requestExactAlarmsPermission();` de `notification_service.dart`. Al próximo arranque del app, Android ya no abre esa pantalla. Si en el futuro se necesitan alarmas exactas (ej. notificación a las 8pm en punto), se vuelve a agregar.
+
+3. **Conversación estratégica sobre alcance del producto: ¿wallet o coach?** Llegó la pregunta inevitable: ¿debería Mi Presupuesto evolucionar hacia ser una wallet tipo Nequi/Daviplata, no solo trackear plata sino moverla? Análisis honesto de los costos reales de cada camino:
+   - **Wallet completa (SEDPE en Colombia):** capital mínimo de ~5,200 millones COP (~1.2M USD), licencia de la Superintendencia Financiera, compliance con SFC y UIAF, KYC robusto, auditorías SOC 2 / ISO 27001 / PCI-DSS, equipo legal y de seguridad, soporte 24/7, pólizas FOGAFIN. Es construir un banco. No es viable para un proyecto solitario.
+   - **Camino intermedio (Open Banking via Belvo/Finerio en Stage 2):** lectura automática de movimientos del banco con consentimiento del usuario. Requiere ser persona jurídica (SAS), contratos con el aggregator, manejo serio de datos sensibles. Viable cuando haya validación de usuarios reales.
+   - **Decisión:** NO ir por wallet. El valor único de Mi Presupuesto es ser **coach inteligente personalizado**, no commodity wallet. Wallet es categoría saturada con bancos peleando entre sí; coach inteligente con foco colombiano es categoría con espacio. Mejor único en algo escaso que mediocre en algo abundante.
+
+4. **Commit grande consolidando el trabajo del 11 de junio + el fix de notificaciones de hoy** (`bcdb1e5`): 16 archivos, 5,781 inserciones, 88 deleciones. Push exitoso a GitHub. El repo ahora tiene cuatro commits que cuentan el arco completo del Stage 1.
+
+### Lo que funcionó
+
+- **Reservar el commit para después de descansar y volver al día siguiente.** Revisión más limpia, mejor mensaje de commit, decisiones más claras. Lección de cadencia: no comitear en caliente al cierre de una sesión larga.
+- **Tener la conversación de producto antes de comitear, no después.** La decisión de no ir por wallet queda documentada en este DEVLOG y en `BEHAVIOR_DESIGN.md`, no perdida en una conversación efímera.
+
+### Lo que falló y cómo se resolvió
+
+- **El prompt de Android era confuso desde el lado del usuario:** ¿por qué una app de presupuesto pide permiso de alarmas exactas? Esa confusión es la señal de que estábamos pidiendo más de lo necesario. Bueno detectarlo en el primer uso real, antes de que llegue a manos de cualquier otra persona.
+
+### Lecciones aprendidas
+
+- **Pedir permisos que no usás es UX pobre.** Los usuarios desarrollan fatiga de permisos y rechazan todo. Solo pedir lo que se va a usar realmente, cuando se va a usar.
+- **La diferencia entre trackear plata y mover plata es regulatoriamente enorme.** No existe el punto intermedio "casi una wallet": o sos plataforma de información, o sos institución financiera. Conviene entenderlo antes de tomar la decisión.
+- **Externalizar decisiones estratégicas al repo es seguro.** Esta conversación de "wallet vs coach" podría perderse en cualquier chat. Materializada en `BEHAVIOR_DESIGN.md` y en este DEVLOG, sobrevive a todo. La conversación es catalizador; los artefactos son legado.
+- **El roadmap del proyecto tiene capa técnica y capa de producto.** Las técnicas son qué construyo. Las de producto son por qué y para qué. Ambas necesitan documentarse o se pierden.
+
+### Métricas
+
+- Archivos modificados directamente hoy: 1 (`notification_service.dart`)
+- Líneas eliminadas hoy: 1
+- Commit del día: `bcdb1e5` (consolidando todo el trabajo del 11 + el fix de hoy)
+- Total de commits en el repo: 4
+- Decisiones de producto formalizadas hoy: 2 (no-wallet, debt-first design como principio rector)
+
+### Próximos pasos
+
+- `BEHAVIOR_DESIGN.md` (siguiente commit, mismo día): documento formal con los 8 principios + debt-first.
+- Quinto commit del día: docs con esta entrada del DEVLOG y el `BEHAVIOR_DESIGN.md`.
+- `chore:` commit en algún momento limpiando los 33 `info` de estilo que arrastra `flutter analyze` (curly braces, build_context_synchronously, etc.). No es urgente.
+- Usar la app con datos reales: registrar mis propios ingresos y gastos del mes para validar el flujo end-to-end de usuario.
+- Cuando se active la API key de Anthropic: testear Fin con preguntas reales sobre mi situación financiera.
+- Configurar `AndroidManifest.xml` con `POST_NOTIFICATIONS` permission para Android 13+ si aparece como necesario en pruebas.
+
+---
