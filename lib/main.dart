@@ -511,7 +511,10 @@ class _MyHomePageState extends State<MyHomePage> {
   // GUARDAR MOVIMIENTO
   // ===========================
   Future<void> _guardarMovimiento() async {
-    final valor = double.tryParse(_valorController.text);
+    // El campo muestra el monto con separadores de miles (1.200.000),
+    // así que parseamos con el helper que limpia los puntos antes de
+    // convertir. double.tryParse fallaría con los puntos.
+    final valor = MilesInputFormatter.parse(_valorController.text);
     if (valor == null ||
         _tipoSeleccionado == null ||
         _categoriaSeleccionada == null) return;
@@ -590,7 +593,8 @@ class _MyHomePageState extends State<MyHomePage> {
     setState(() {
       _tipoSeleccionado = m['tipo'];
       _categoriaSeleccionada = m['categoria'];
-      _valorController.text = m['valor'].toString();
+      _valorController.text =
+          MilesInputFormatter.format((m['valor'] as num).toDouble());
       _descController.text = m['descripcion'] ?? '';
       _esFijo = m['es_fijo'] == 1;
     });
@@ -710,8 +714,9 @@ class _MyHomePageState extends State<MyHomePage> {
                         icon: const Icon(Icons.save),
                         label: const Text('Guardar cambios'),
                         onPressed: () async {
+                          // Mismo parsing con separadores de miles que en guardar.
                           final valor =
-                              double.tryParse(_valorController.text);
+                              MilesInputFormatter.parse(_valorController.text);
                           if (valor == null ||
                               _tipoSeleccionado == null ||
                               _categoriaSeleccionada == null) return;
@@ -1836,7 +1841,7 @@ class _MyHomePageState extends State<MyHomePage> {
             onEnd: () => _balanceAnterior = balanceActual,
             builder: (context, value, child) {
               return Text(
-                _formatearMonto(value),
+                _formatearCompacto(value),
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 30,
@@ -1978,7 +1983,7 @@ class _MyHomePageState extends State<MyHomePage> {
             Icon(icono, size: 12, color: color),
             const SizedBox(width: 4),
             Text(
-              _formatearMonto(valor),
+              _formatearCompacto(valor),
               style: TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.w600,
@@ -2100,6 +2105,34 @@ class _MyHomePageState extends State<MyHomePage> {
 
   // FIX #12: usa la instancia estática _formatoMoneda
   String _formatearMonto(double valor) => _formatoMoneda.format(valor);
+
+  // Formato compacto para el resumen (balance y stats): K para miles,
+  // M para millones con un decimal. La lista de movimientos sigue usando
+  // _formatearMonto (valor completo) — acá solo se busca limpieza visual.
+  String _formatearCompacto(double valor) {
+    final abs = valor.abs();
+    final signo = valor < 0 ? '-' : '';
+
+    if (abs >= 1000000) {
+      // Millones con un decimal: 1.200.000 -> "1,2 M". Quitamos el ",0"
+      // cuando es redondo (2.000.000 -> "2 M", no "2,0 M").
+      final millones = abs / 1000000;
+      final texto = millones
+          .toStringAsFixed(1)
+          .replaceAll('.', ',')
+          .replaceAll(',0', '');
+      return '$signo\$ $texto M';
+    }
+
+    if (abs >= 10000) {
+      // Miles a partir de 10.000: 45.000 -> "45 K".
+      final miles = (abs / 1000).round();
+      return '$signo\$ $miles K';
+    }
+
+    // Menos de 10.000: valor completo con separadores ("8.500").
+    return _formatoMoneda.format(valor);
+  }
 }
 
 // ===========================
