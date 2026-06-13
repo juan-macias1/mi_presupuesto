@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'theme/app_colors.dart';
 import 'services/preferences_service.dart';
+import 'helpers/miles_input_formatter.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:intl/intl.dart';
@@ -750,9 +751,8 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   // ===========================
-  // BOTTOM SHEET NUEVO MOVIMIENTO
+  // BOTTOM SHEET NUEVO MOVIMIENTO  (rediseñado)
   // ===========================
-
   void _mostrarFormulario() {
     _descController.clear();
     _valorController.clear();
@@ -763,126 +763,290 @@ class _MyHomePageState extends State<MyHomePage> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setModalState) {
+            // Color semántico según el tipo elegido (gris si aún no eligió).
+            final Color colorTipo = _tipoSeleccionado == 'gasto'
+                ? AppColors.gasto
+                : _tipoSeleccionado == 'ingreso'
+                    ? AppColors.ingreso
+                    : Colors.grey;
+
+            final bool puedeGuardar = _tipoSeleccionado != null &&
+                _categoriaSeleccionada != null &&
+                _valorController.text.isNotEmpty;
+
             return Padding(
               padding: EdgeInsets.only(
-                left: 16,
-                right: 16,
-                top: 16,
-                bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+                left: 20,
+                right: 20,
+                top: 12,
+                bottom: MediaQuery.of(context).viewInsets.bottom + 20,
               ),
               child: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    // Handle
+                    Center(
+                      child: Container(
+                        width: 36,
+                        height: 4,
+                        margin: const EdgeInsets.only(bottom: 16),
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade300,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+
                     const Text(
                       'Nuevo movimiento',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
+                      style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
                     ),
-
                     const SizedBox(height: 16),
 
-                    DropdownButtonFormField<String>(
-                      hint: const Text('Selecciona tipo'),
-                      items: const [
-                        DropdownMenuItem(value: 'gasto', child: Text('Gasto')),
-                        DropdownMenuItem(
-                          value: 'ingreso',
-                          child: Text('Ingreso'),
+                    // ── Toggle Gasto / Ingreso ──
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _ToggleTipo(
+                            label: 'Gasto',
+                            icono: Icons.arrow_circle_down_outlined,
+                            color: AppColors.gasto,
+                            seleccionado: _tipoSeleccionado == 'gasto',
+                            onTap: () => setModalState(() {
+                              _tipoSeleccionado = 'gasto';
+                            }),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _ToggleTipo(
+                            label: 'Ingreso',
+                            icono: Icons.arrow_circle_up_outlined,
+                            color: AppColors.ingreso,
+                            seleccionado: _tipoSeleccionado == 'ingreso',
+                            onTap: () => setModalState(() {
+                              _tipoSeleccionado = 'ingreso';
+                              _esFijo = false; // fijo no aplica a ingresos
+                            }),
+                          ),
                         ),
                       ],
-                      onChanged: (v) {
-                        setModalState(() {
-                          _tipoSeleccionado = v;
-                        });
-                      },
-                      decoration: const InputDecoration(
-                        labelText: 'Tipo',
-                        border: OutlineInputBorder(),
+                    ),
+
+                    const SizedBox(height: 24),
+
+                    // ── Monto protagonista ──
+                    Center(
+                      child: Column(
+                        children: [
+                          Text(
+                            'MONTO',
+                            style: TextStyle(
+                              fontSize: 11,
+                              letterSpacing: 0.5,
+                              color: Colors.grey.shade500,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              Text(
+                                '\$ ',
+                                style: TextStyle(
+                                  fontSize: 26,
+                                  color: Colors.grey.shade400,
+                                ),
+                              ),
+                              IntrinsicWidth(
+                                child: TextField(
+                                  controller: _valorController,
+                                  autofocus: true,
+                                  keyboardType: TextInputType.number,
+                                  textAlign: TextAlign.center,
+                                  inputFormatters: [MilesInputFormatter()],
+                                  onChanged: (_) => setModalState(() {}),
+                                  style: TextStyle(
+                                    fontSize: 38,
+                                    fontWeight: FontWeight.w600,
+                                    color: colorTipo,
+                                    letterSpacing: -0.5,
+                                  ),
+                                  decoration: InputDecoration(
+                                    isDense: true,
+                                    hintText: '0',
+                                    hintStyle: TextStyle(
+                                      fontSize: 38,
+                                      fontWeight: FontWeight.w600,
+                                      color: Colors.grey.shade300,
+                                    ),
+                                    border: InputBorder.none,
+                                    contentPadding: EdgeInsets.zero,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          Container(
+                            height: 2,
+                            width: 180,
+                            margin: const EdgeInsets.only(top: 6),
+                            color: colorTipo.withValues(alpha: 0.3),
+                          ),
+                        ],
                       ),
                     ),
 
+                    const SizedBox(height: 24),
+
+                    // ── Selector de categoría (fila que abre lista) ──
+                    InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: () => _abrirSelectorCategoria(setModalState),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 13,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF7F7F7),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(
+                          children: [
+                            if (_categoriaSeleccionada != null) ...[
+                              Text(
+                                _obtenerEmoji(_categoriaSeleccionada!),
+                                style: const TextStyle(fontSize: 18),
+                              ),
+                              const SizedBox(width: 10),
+                              Text(
+                                _categoriaSeleccionada!,
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  color: Color(0xFF333333),
+                                ),
+                              ),
+                            ] else
+                              Text(
+                                'Selecciona categoría',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: Colors.grey.shade500,
+                                ),
+                              ),
+                            const Spacer(),
+                            Icon(
+                              Icons.keyboard_arrow_down,
+                              size: 18,
+                              color: Colors.grey.shade500,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 10),
+
+                    // ── Descripción ──
+                    Container(
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF7F7F7),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: TextField(
+                        controller: _descController,
+                        decoration: InputDecoration(
+                          hintText: 'Descripción (opcional)',
+                          hintStyle: TextStyle(
+                            fontSize: 14,
+                            color: Colors.grey.shade500,
+                          ),
+                          prefixIcon: Icon(
+                            Icons.edit_outlined,
+                            size: 18,
+                            color: Colors.grey.shade500,
+                          ),
+                          border: InputBorder.none,
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 13,
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    // ── Switch gasto fijo (solo en gasto) ──
                     if (_tipoSeleccionado == 'gasto') ...[
                       const SizedBox(height: 8),
-                      SwitchListTile(
-                        title: const Text('Es gasto fijo'),
-                        subtitle: const Text(
-                          'Si no es fijo, se considera variable',
-                          style: TextStyle(fontSize: 11),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'Gasto fijo',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: Color(0xFF333333),
+                                  ),
+                                ),
+                                Text(
+                                  'Se repite cada mes',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: Colors.grey.shade400,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            Switch(
+                              value: _esFijo,
+                              onChanged: (v) => setModalState(() => _esFijo = v),
+                            ),
+                          ],
                         ),
-                        value: _esFijo,
-                        onChanged: (value) {
-                          setModalState(() => _esFijo = value);
-                        },
                       ),
                     ],
 
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 22),
 
-                    DropdownButtonFormField<String>(
-                      initialValue: _categoriaSeleccionada,
-                      hint: const Text('Selecciona categoría'),
-                      items: categorias.map((c) {
-                        return DropdownMenuItem<String>(
-                          value: c['nombre'],
-                          child: Text('${c['emoji']} ${c['nombre']}'),
-                        );
-                      }).toList(),
-                      onChanged: (v) =>
-                          setModalState(() => _categoriaSeleccionada = v),
-                      decoration: const InputDecoration(
-                        labelText: 'Categoría',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-
-                    const SizedBox(height: 12),
-
-                    TextField(
-                      controller: _valorController,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        labelText: 'Valor',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-
-                    const SizedBox(height: 12),
-
-                    TextField(
-                      controller: _descController,
-                      decoration: const InputDecoration(
-                        labelText: 'Descripción (opcional)',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-
-                    const SizedBox(height: 20),
-
+                    // ── Botón guardar (verde de marca siempre) ──
                     SizedBox(
                       width: double.infinity,
-                      height: 48,
-                      child: ElevatedButton.icon(
-                        icon: const Icon(Icons.save),
-                        label: const Text('Guardar movimiento'),
+                      height: 52,
+                      child: ElevatedButton(
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: _tipoSeleccionado == null
-                              ? Colors.grey
-                              : (_tipoSeleccionado == 'gasto'
-                                    ? Colors.red
-                                    : Colors.green),
+                          backgroundColor: AppColors.primary,
+                          foregroundColor: Colors.white,
+                          disabledBackgroundColor: Colors.grey.shade300,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
                         ),
-                        onPressed:
-                            (_tipoSeleccionado == null ||
-                                _categoriaSeleccionada == null ||
-                                _valorController.text.isEmpty)
-                            ? null
-                            : _guardarMovimiento,
+                        onPressed: puedeGuardar ? _guardarMovimiento : null,
+                        child: Text(
+                          _tipoSeleccionado == 'ingreso'
+                              ? 'Guardar ingreso'
+                              : 'Guardar gasto',
+                          style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
                       ),
                     ),
                   ],
@@ -890,6 +1054,66 @@ class _MyHomePageState extends State<MyHomePage> {
               ),
             );
           },
+        );
+      },
+    );
+  }
+
+  // Selector de categoría como bottom sheet secundario.
+  void _abrirSelectorCategoria(StateSetter setModalState) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const Text(
+                'Selecciona categoría',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 8),
+              Flexible(
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: categorias.length,
+                  itemBuilder: (context, index) {
+                    final cat = categorias[index];
+                    final seleccionada = _categoriaSeleccionada == cat['nombre'];
+                    return ListTile(
+                      leading: Text(
+                        cat['emoji'],
+                        style: const TextStyle(fontSize: 22),
+                      ),
+                      title: Text(cat['nombre']),
+                      trailing: seleccionada
+                          ? Icon(Icons.check, color: AppColors.primary, size: 20)
+                          : null,
+                      onTap: () {
+                        setModalState(() => _categoriaSeleccionada = cat['nombre']);
+                        Navigator.of(sheetContext).pop();
+                      },
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
+          ),
         );
       },
     );
@@ -1943,6 +2167,65 @@ class _PremiumLoadingIconState extends State<_PremiumLoadingIcon>
           ),
         );
       },
+    );
+  }
+}
+
+// ===========================
+// TOGGLE DE TIPO (Gasto / Ingreso) — usado en el formulario
+// ===========================
+class _ToggleTipo extends StatelessWidget {
+  final String label;
+  final IconData icono;
+  final Color color;
+  final bool seleccionado;
+  final VoidCallback onTap;
+
+  const _ToggleTipo({
+    required this.label,
+    required this.icono,
+    required this.color,
+    required this.seleccionado,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+          color: seleccionado
+              ? color.withValues(alpha: 0.10)
+              : const Color(0xFFF7F7F7),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: seleccionado ? color : Colors.transparent,
+            width: 1.5,
+          ),
+        ),
+        child: Column(
+          children: [
+            Icon(
+              icono,
+              size: 22,
+              color: seleccionado ? color : Colors.grey.shade400,
+            ),
+            const SizedBox(height: 2),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                color: seleccionado ? color : Colors.grey.shade400,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
