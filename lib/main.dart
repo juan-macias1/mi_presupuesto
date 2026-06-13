@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'theme/app_colors.dart';
+import 'services/preferences_service.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:intl/intl.dart';
@@ -34,6 +35,9 @@ Future<void> main() async {
 
   // Inicializar formato de fechas en es_CO (Colombia).
   await initializeDateFormatting('es_CO', null);
+
+  // Inicializar el servicio de preferencias (nombre del usuario, etc.).
+  await PreferencesService.instance.inicializar();
 
   // Notificaciones locales — silenciar fallas si el dispositivo
   // no las soporta (por ejemplo emuladores antiguos).
@@ -150,6 +154,14 @@ class _MyHomePageState extends State<MyHomePage> {
   String? _categoriaSeleccionada;
   String _textoBusqueda = '';
 
+  // Nombre del usuario para el saludo del header (de PreferencesService).
+  String? _nombreUsuario;
+
+  // Cantidad de deudas activas — alimenta el badge del ícono de Deudas.
+  // 0 = sin badge, >0 = badge naranja. La severidad (rojo) se cableará
+  // cuando integremos el brain en la tanda del gancho psicológico.
+  int _deudasActivas = 0;
+
   // FIX #17: Guardamos el balance anterior para que la animación no arranque desde 0 en cada rebuild
   double _balanceAnterior = 0;
 
@@ -244,6 +256,27 @@ class _MyHomePageState extends State<MyHomePage> {
     }
   }
 
+  // ── Saludo contextual según la hora del día ────────────────
+  String _saludoSegunHora() {
+    final hora = DateTime.now().hour;
+    if (hora < 12) return 'Buen día';
+    if (hora < 19) return 'Buenas tardes';
+    return 'Buenas noches';
+  }
+
+  IconData _iconoSaludo() {
+    final hora = DateTime.now().hour;
+    if (hora < 12) return Icons.wb_sunny_outlined; // mañana
+    if (hora < 19) return Icons.wb_twilight; // tarde
+    return Icons.nightlight_outlined; // noche
+  }
+
+  Color _colorIconoSaludo() {
+    final hora = DateTime.now().hour;
+    if (hora < 19) return const Color(0xFFBA7517); // sol — ámbar
+    return AppColors.acento; // luna — acento nocturno
+  }
+
   String _obtenerEmoji(String nombreCategoria) {
     final categoriaEncontrada = categorias.firstWhere(
       (cat) => cat['nombre'] == nombreCategoria,
@@ -322,6 +355,8 @@ class _MyHomePageState extends State<MyHomePage> {
     // FIX #9: removidas las doble asignaciones de _filtroTiempo y _filtroTipo
     _cargarCategorias();
     _cargarMovimientos();
+    _cargarDeudasActivas();
+    _cargarNombreYBienvenida();
   }
 
   @override
@@ -342,6 +377,74 @@ class _MyHomePageState extends State<MyHomePage> {
     setState(() {
       _movimientos = data;
     });
+  }
+
+  Future<void> _cargarDeudasActivas() async {
+    final deudas = await DatabaseHelper.instance.obtenerDeudas();
+    if (!mounted) return;
+    setState(() {
+      _deudasActivas = deudas.length;
+    });
+  }
+
+  Future<void> _cargarNombreYBienvenida() async {
+    final nombre = PreferencesService.instance.nombreUsuario;
+    if (nombre != null) {
+      setState(() => _nombreUsuario = nombre);
+      return;
+    }
+    // Primer arranque: no hay nombre. Esperamos a que el primer frame
+    // se dibuje y mostramos el diálogo de bienvenida.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _mostrarDialogoBienvenida();
+    });
+  }
+
+  Future<void> _mostrarDialogoBienvenida() async {
+    final controller = TextEditingController();
+    final nombre = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('¡Bienvenido! 👋'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Para personalizar tu experiencia, ¿cómo te llamás?',
+                style: TextStyle(fontSize: 14),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(
+                  hintText: 'Tu nombre',
+                  border: OutlineInputBorder(),
+                ),
+                onSubmitted: (v) => Navigator.of(dialogContext).pop(v.trim()),
+              ),
+            ],
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () =>
+                  Navigator.of(dialogContext).pop(controller.text.trim()),
+              child: const Text('Continuar'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (nombre != null && nombre.isNotEmpty) {
+      await PreferencesService.instance.guardarNombre(nombre);
+      if (!mounted) return;
+      setState(() => _nombreUsuario = nombre);
+    }
   }
 
   Future<void> _cargarCategorias() async {
@@ -1390,6 +1493,33 @@ class _MyHomePageState extends State<MyHomePage> {
   // ===========================
   // RESUMEN FINANCIERO
   // ===========================
+  // ── Header de saludo ───────────────────────────────────────
+  Widget _buildSaludo() {
+    final saludo = _saludoSegunHora();
+    final nombre = _nombreUsuario;
+    final textoSaludo = nombre != null ? '$saludo, $nombre' : saludo;
+
+    return Container(
+      width: double.infinity,
+      color: AppColors.surface,
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+      child: Row(
+        children: [
+          Text(
+            textoSaludo,
+            style: const TextStyle(
+              fontSize: 17,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF1A1A1A),
+            ),
+          ),
+          const SizedBox(width: 7),
+          Icon(_iconoSaludo(), size: 18, color: _colorIconoSaludo()),
+        ],
+      ),
+    );
+  }
+
   Widget _resumenFinanciero() {
     String periodoTexto = '';
     if (_filtroTiempo == 'hoy') periodoTexto = 'Hoy';
@@ -1427,8 +1557,10 @@ class _MyHomePageState extends State<MyHomePage> {
     final balanceActual = balance;
     final balanceInicio = _balanceAnterior;
 
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+    return Container(
+      width: double.infinity,
+      color: AppColors.surface,
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
@@ -1483,7 +1615,7 @@ class _MyHomePageState extends State<MyHomePage> {
                 _formatearMonto(value),
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  fontSize: 36,
+                  fontSize: 30,
                   fontWeight: FontWeight.w700,
                   color: balanceColor,
                   letterSpacing: 0.5,
@@ -1642,51 +1774,93 @@ class _MyHomePageState extends State<MyHomePage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: Colors.white,
+        backgroundColor: AppColors.surface,
         foregroundColor: Colors.black,
         elevation: 0,
         toolbarHeight: 56,
         title: const Text('Mi Presupuesto'),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.flag_outlined),
-            onPressed: _abrirMetas,
-            tooltip: 'Metas',
-          ),
-          IconButton(
-            icon: const Icon(Icons.credit_card_outlined),
-            onPressed: _abrirDeudas,
-            tooltip: 'Deudas',
-          ),
+          // Dashboard — acción principal.
           IconButton(
             icon: const Icon(Icons.dashboard_outlined),
             onPressed: _abrirDashboard,
             tooltip: 'Dashboard',
           ),
+          // Deudas — con badge de estado (debt-first design).
+          // Sin deudas: ícono limpio. Con deudas: punto naranja.
+          // (La severidad roja se cableará con el brain más adelante.)
           IconButton(
-            icon: const Icon(Icons.category_outlined),
-            onPressed: _mostrarGestionCategorias,
-            tooltip: 'Categorías',
-          ),
-          IconButton(
-            splashRadius: 20,
-            icon: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 300),
-              child: _subiendoBackup
-                  ? const _PremiumLoadingIcon()
-                  : const Icon(
-                      Icons.cloud_upload_outlined,
-                      key: ValueKey("icon"),
-                    ),
+            icon: Badge(
+              isLabelVisible: _deudasActivas > 0,
+              backgroundColor: AppColors.deuda,
+              smallSize: 8,
+              child: const Icon(Icons.credit_card_outlined),
             ),
-            onPressed: _subiendoBackup ? null : _ejecutarBackup,
-            tooltip: 'Backup',
+            onPressed: _abrirDeudas,
+            tooltip: 'Deudas',
+          ),
+          // Overflow — acciones secundarias (metas, categorías, backup).
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert),
+            tooltip: 'Más opciones',
+            onSelected: (valor) {
+              switch (valor) {
+                case 'metas':
+                  _abrirMetas();
+                  break;
+                case 'categorias':
+                  _mostrarGestionCategorias();
+                  break;
+                case 'backup':
+                  if (!_subiendoBackup) _ejecutarBackup();
+                  break;
+              }
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 'metas',
+                child: Row(
+                  children: [
+                    Icon(Icons.flag_outlined, size: 20),
+                    SizedBox(width: 12),
+                    Text('Metas'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'categorias',
+                child: Row(
+                  children: [
+                    Icon(Icons.category_outlined, size: 20),
+                    SizedBox(width: 12),
+                    Text('Categorías'),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'backup',
+                child: Row(
+                  children: [
+                    _subiendoBackup
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.cloud_upload_outlined, size: 20),
+                    const SizedBox(width: 12),
+                    Text(_subiendoBackup ? 'Subiendo...' : 'Backup'),
+                  ],
+                ),
+              ),
+            ],
           ),
         ],
       ),
 
       body: Column(
         children: [
+          _buildSaludo(),
           _resumenFinanciero(),
           const Divider(height: 1),
           Expanded(child: _listaMovimientos(movimientosFiltrados)),
