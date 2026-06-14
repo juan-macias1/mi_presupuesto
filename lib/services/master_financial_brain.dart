@@ -100,7 +100,8 @@ class MasterFinancialBrain {
 
     // PASO 8: Insights, riesgos, recomendaciones, comportamiento
     // Todos consumen flujo — sin llamadas redundantes a la DB
-    final insights = _generarInsights(flujo, modo);
+    final confianza = _calcularConfianza(movimientosMes.length);
+    final insights = _generarInsights(flujo, modo, confianza);
     final riesgos = _generarRiesgos(flujo, modo);
     final recomendaciones = _generarRecomendaciones(flujo, modo, planPago);
     final estrategias = _generarEstrategias(flujo, modo, proyeccion);
@@ -323,6 +324,7 @@ class MasterFinancialBrain {
   List<FinancialInsight> _generarInsights(
     FlujoMensual flujo,
     ModoFinanciero modo,
+    NivelConfianza confianza,
   ) {
     final insights = <FinancialInsight>[];
 
@@ -344,50 +346,98 @@ class MasterFinancialBrain {
       return insights;
     }
 
-    // Ratio gastos operativos
+    // ── COMPUERTA DE CONFIANZA ──
+    // Con datos insuficientes NO afirmamos situaciones (ni buenas ni malas).
+    // Acá muere el bug "0% de gastos = posición sólida": si casi no hay
+    // gastos registrados, no es buena situación, es falta de datos.
+    if (confianza == NivelConfianza.insuficiente) {
+      insights.add(FinancialInsight(
+        titulo: 'Análisis preliminar',
+        mensaje:
+            'Llevas pocos movimientos este mes. Registra unos días más '
+            'para darte una lectura confiable de tu situación.',
+        nivel: 'neutro',
+      ));
+      // Aun así, una deuda crítica SÍ se avisa — no depende de cuántos
+      // gastos cargaste este mes, es un hecho de tus deudas reales.
+      if (flujo.ratioDeuda > 1) {
+        insights.add(FinancialInsight(
+          titulo: 'Deuda crítica',
+          mensaje:
+              'Tu deuda equivale a ${flujo.ratioDeuda.toStringAsFixed(1)} '
+              'meses de ingresos. Es la prioridad, sin importar el mes.',
+          nivel: 'alerta',
+        ));
+      }
+      return insights;
+    }
+
+    // Prefijo de tono según confianza parcial vs sólida.
+    final cauto = confianza == NivelConfianza.parcial;
+    final ratioGastoPct =
+        (flujo.ratioGastoOperativo * 100).toStringAsFixed(0);
+
+    // ── Gasto operativo ──
     if (flujo.ratioGastoOperativo > 0.9) {
       insights.add(FinancialInsight(
         titulo: 'Zona de peligro financiero',
-        mensaje:
-            'Usas el ${(flujo.ratioGastoOperativo * 100).toStringAsFixed(0)}% '
-            'de tus ingresos en gastos operativos. Casi sin margen.',
+        mensaje: cauto
+            ? 'Hasta ahora usas el $ratioGastoPct% de tus ingresos en '
+                'gastos. Si sigue así, terminás el mes sin margen.'
+            : 'Usas el $ratioGastoPct% de tus ingresos en gastos '
+                'operativos. Casi sin margen — recortar un gasto fijo '
+                'libera aire de inmediato.',
         nivel: 'alerta',
       ));
-    } else if (flujo.ratioGastoOperativo < 0.5) {
+    } else if (flujo.ratioGastoOperativo < 0.10) {
+      // Ratio casi nulo = no hay gastos cargados, NO es buen control.
+      // Nadie vive sin gastar; esto es falta de datos, no una virtud.
       insights.add(FinancialInsight(
-        titulo: 'Excelente control de gastos',
+        titulo: 'Faltan gastos por registrar',
         mensaje:
-            'Solo usas el ${(flujo.ratioGastoOperativo * 100).toStringAsFixed(0)}% '
-            'de tus ingresos en gastos. Posición muy sólida.',
+            'Registraste ingresos pero casi ningún gasto este mes. '
+            'Cargá tus gastos para ver tu situación real.',
+        nivel: 'neutro',
+      ));
+    } else if (flujo.ratioGastoOperativo < 0.6) {
+      // Ratio creíble y saludable: acá sí celebramos.
+      insights.add(FinancialInsight(
+        titulo: cauto ? 'Buen ritmo hasta ahora' : 'Buen control de gastos',
+        mensaje: cauto
+            ? 'Hasta ahora usas el $ratioGastoPct% de tus ingresos. '
+                'Vas bien, pero falta cerrar el mes para confirmarlo.'
+            : 'Usas el $ratioGastoPct% de tus ingresos en gastos. '
+                'Te queda buen margen para ahorrar o atacar deuda.',
         nivel: 'positivo',
       ));
     }
 
-    // Deuda
+    // ── Deuda ──
     if (flujo.ratioDeuda > 1) {
       insights.add(FinancialInsight(
         titulo: 'Deuda crítica',
         mensaje:
             'Tu deuda equivale a ${flujo.ratioDeuda.toStringAsFixed(1)} meses '
-            'de ingresos. Prioridad máxima.',
+            'de ingresos. Es tu prioridad número uno.',
         nivel: 'alerta',
       ));
     } else if (flujo.ratioDeuda > 0.5) {
       insights.add(FinancialInsight(
         titulo: 'Deuda significativa',
         mensaje:
-            'Tu deuda equivale al '
-            '${(flujo.ratioDeuda * 100).toStringAsFixed(0)}% de tus ingresos.',
+            'Tu deuda equivale al ${(flujo.ratioDeuda * 100).toStringAsFixed(0)}% '
+            'de tus ingresos. Manejable, pero conviene atacarla.',
         nivel: 'alerta',
       ));
     }
 
-    // Modo libertad
+    // ── Modo libertad ──
     if (modo == ModoFinanciero.libertad) {
       insights.add(FinancialInsight(
         titulo: '¡Sin deudas!',
         mensaje:
-            'Estás en modo libertad financiera. Es momento de hacer crecer tu dinero.',
+            'Estás en modo libertad financiera. Es momento de hacer crecer '
+            'tu dinero con un fondo de emergencia y luego inversión.',
         nivel: 'positivo',
       ));
     }
@@ -621,12 +671,18 @@ class MasterFinancialBrain {
       }
     }
 
-    if (finDeSemana > semana * 0.6) {
+    // Comparamos PROMEDIO DIARIO, no totales. El finde son 2 días y la
+    // semana 5, así que comparar totales siempre exagera la semana. Si el
+    // día promedio de finde supera al de semana en más de 40%, hay patrón.
+    final promedioDiaFinde = finDeSemana / 2;
+    final promedioDiaSemana = semana / 5;
+    if (promedioDiaSemana > 0 &&
+        promedioDiaFinde > promedioDiaSemana * 1.4) {
       comportamientos.add(FinancialBehavior(
-        titulo: 'Gastos concentrados en fines de semana',
+        titulo: 'Gastas más los fines de semana',
         mensaje:
-            'El fin de semana es cuando más gastas. '
-            'Un presupuesto semanal puede ayudarte.',
+            'Tu gasto promedio por día sube los fines de semana. '
+            'Ponerte un tope para el finde puede ayudarte a controlarlo.',
       ));
     }
 
@@ -674,6 +730,17 @@ class MasterFinancialBrain {
   ) {
     if (ingresos == 0) return [];
 
+    // Categorías donde un % alto es ESPERADO y sano — no son fugas.
+    // El arriendo puede ser 30% de tus ingresos sin que sea un problema.
+    const categoriasEsenciales = {
+      'Vivienda',
+      'Alimentación',
+      'Servicios',
+      'Salud',
+      'Educación',
+      'Transporte',
+    };
+
     final Map<String, double> porCategoria = {};
     for (final m in movimientosMes) {
       if (m.tipo == 'gasto' && !m.esDeuda) {
@@ -682,17 +749,37 @@ class MasterFinancialBrain {
       }
     }
 
-    return porCategoria.entries
-        .where((e) => e.value / ingresos > 0.30)
-        .map((e) => MoneyLeak(
-              categoria: e.key,
-              porcentaje: e.value / ingresos,
-              mensaje:
-                  'Tus gastos en ${e.key} representan '
-                  '${((e.value / ingresos) * 100).toStringAsFixed(1)}% '
-                  'de tus ingresos este mes.',
-            ))
-        .toList();
+    final fugas = <MoneyLeak>[];
+
+    porCategoria.forEach((categoria, monto) {
+      final ratio = monto / ingresos;
+      final esEsencial = categoriasEsenciales.contains(categoria);
+
+      // Umbral distinto según el tipo de gasto:
+      // - Esenciales: solo es alerta si es desproporcionado (>40%).
+      // - Discrecionales: una fuga real desde 20%.
+      final umbral = esEsencial ? 0.40 : 0.20;
+
+      if (ratio > umbral) {
+        final pct = (ratio * 100).toStringAsFixed(0);
+        fugas.add(MoneyLeak(
+          categoria: categoria,
+          porcentaje: ratio,
+          mensaje: esEsencial
+              // Para esenciales: tono informativo, no acusatorio.
+              ? '$categoria se lleva el $pct% de tus ingresos. Es un gasto '
+                  'necesario, pero es alto — vale revisar si hay margen.'
+              // Para discrecionales: fuga real, con acción.
+              : 'Gastas el $pct% de tus ingresos en $categoria. '
+                  'Reducir aquí es donde más rápido liberas flujo.',
+        ));
+      }
+    });
+
+    // Ordenar de mayor a menor — la fuga más grande primero.
+    fugas.sort((a, b) => b.porcentaje.compareTo(a.porcentaje));
+
+    return fugas;
   }
 
   // ══════════════════════════════════════════════════════════
@@ -797,6 +884,27 @@ class MasterFinancialBrain {
   // ══════════════════════════════════════════════════════════
   // Helpers privados
   // ══════════════════════════════════════════════════════════
+  // ── Capa de confianza ─────────────────────────────────────
+  /// Decide cuánta confianza merece el análisis. Dos señales:
+  /// cantidad de movimientos del mes y qué día del mes es hoy.
+  /// Umbrales acordados: insuficiente si ≤5 movimientos o antes del día 7.
+  NivelConfianza _calcularConfianza(int cantidadMovimientos) {
+    final diaDelMes = DateTime.now().day;
+
+    // Insuficiente: pocos datos O demasiado temprano en el mes.
+    if (cantidadMovimientos <= 5 || diaDelMes < 7) {
+      return NivelConfianza.insuficiente;
+    }
+
+    // Sólida: buena cantidad de datos Y mes ya avanzado.
+    if (cantidadMovimientos >= 12 && diaDelMes >= 15) {
+      return NivelConfianza.solida;
+    }
+
+    // En el medio: hay datos pero el panorama aún no está cerrado.
+    return NivelConfianza.parcial;
+  }
+
   Map<String, String> _evaluarSalud(FlujoMensual flujo) {
     if (flujo.ingresos == 0) {
       return {'estado': 'CRÍTICO', 'mensaje': 'No hay ingresos registrados'};
@@ -812,4 +920,18 @@ class MasterFinancialBrain {
     }
     return {'estado': 'SALUDABLE', 'mensaje': 'Buen control financiero'};
   }
+}
+
+/// Nivel de confianza del análisis, según cuántos datos hay y qué tan
+/// avanzado está el mes. Modula el TONO de los mensajes: con datos
+/// insuficientes el sistema no afirma situaciones, solo invita a registrar.
+enum NivelConfianza {
+  /// Pocos movimientos o muy temprano en el mes. No se afirma nada.
+  insuficiente,
+
+  /// Hay datos pero el mes está en curso. Se habla con cautela.
+  parcial,
+
+  /// Suficientes datos y mes avanzado. Se afirma con seguridad.
+  solida,
 }
