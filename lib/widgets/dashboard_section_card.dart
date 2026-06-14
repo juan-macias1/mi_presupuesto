@@ -5,6 +5,7 @@ class DashboardSectionCard extends StatefulWidget {
   final IconData icono;
   final List<Widget> children;
   final bool inicialmenteExpandido;
+  final String? resumen;
 
   const DashboardSectionCard({
     super.key,
@@ -13,6 +14,7 @@ class DashboardSectionCard extends StatefulWidget {
     required this.children,
     // BUG FIX #5: true por defecto para que el contenido sea visible al abrir
     this.inicialmenteExpandido = true,
+    this.resumen,
   });
 
   @override
@@ -51,12 +53,27 @@ class _DashboardSectionCardState extends State<DashboardSectionCard> {
                   ),
                   const SizedBox(width: 10),
                   Expanded(
-                    child: Text(
-                      widget.titulo,
-                      style: const TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.bold,
-                      ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          widget.titulo,
+                          style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        if (widget.resumen != null) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            widget.resumen!,
+                            style: TextStyle(
+                              fontSize: 12.5,
+                              color: Colors.grey.shade600,
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                   ),
                   Icon(

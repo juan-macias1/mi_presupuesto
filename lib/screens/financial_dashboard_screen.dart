@@ -16,7 +16,6 @@ import '../widgets/dashboard_section_card.dart';
 import '../widgets/dashboard_risk_chip.dart';
 import '../widgets/dashboard_charts_card.dart';
 import '../screens/chat_ia_screen.dart';
-import '../screens/deudas_screen.dart';
 import '../services/notification_service.dart';
 import '../theme/app_colors.dart';
 
@@ -172,399 +171,426 @@ class _FinancialDashboardScreenState
   }
 
   // ── Banner de modo ────────────────────────────────────────
+  // ── Zona foco — hero + contexto ───────────────────────────
   Widget _buildBannerModo(MasterFinancialResult result) {
-    final modo = result.modo;
-    final flujo = result.flujoMensual;
+    final sinDatos = result.distribucion.faseTipada ==
+        FaseFinanciera.datosInsuficientes;
 
-    Color color;
-    switch (modo) {
-      case ModoFinanciero.supervivencia:
-        color = AppColors.gasto;
-        break;
+    switch (result.modo) {
       case ModoFinanciero.ataque:
-        color = AppColors.deuda;
-        break;
+        return sinDatos
+            ? _focoAtaqueSinDatos(result)
+            : _focoAtaqueConDatos(result);
+      case ModoFinanciero.supervivencia:
+        return _focoSupervivencia(result);
       case ModoFinanciero.libertad:
-        color = AppColors.ingreso;
-        break;
+        return sinDatos
+            ? _focoLibertadSinDatos(result)
+            : _focoLibertadConDatos(result);
       default:
-        color = Colors.grey;
+        return const SizedBox.shrink();
     }
+  }
+
+  // Ataque · con datos: la fecha de libertad como protagonista.
+  Widget _focoAtaqueConDatos(MasterFinancialResult result) {
+    final flujo = result.flujoMensual;
+    final meses = result.planPago.mesesParaLiberarse;
+    return Column(
+      children: [
+        _hero(
+          fondo: AppColors.primary,
+          modo: result.modo,
+          eyebrowInline: 'libre en',
+          numero: meses == 1 ? '1 mes' : '$meses meses',
+          subtitulo: '${_fechaLibertad(meses)} · si mantengo el ritmo',
+        ),
+        _focoTarjetas(
+          _focoTarjeta(
+              'Debo', _fmt.format(flujo.totalDeudaReal), AppColors.gasto),
+          _focoTarjeta('Para atacar',
+              _fmt.format(flujo.disponibleParaDeuda), AppColors.ingreso),
+        ),
+      ],
+    );
+  }
+
+  // Ataque · sin datos creíbles: la deuda real, nunca una fecha inventada.
+  Widget _focoAtaqueSinDatos(MasterFinancialResult result) {
+    final flujo = result.flujoMensual;
+    return _hero(
+      fondo: AppColors.primary,
+      modo: result.modo,
+      eyebrowLinea: 'Mi deuda hoy',
+      numero: _fmt.format(flujo.totalDeudaReal),
+      subtitulo: 'Registro mis gastos del mes y calculo mi fecha de libertad.',
+    );
+  }
+
+  // Supervivencia: el déficit es real aunque falten gastos variables.
+  Widget _focoSupervivencia(MasterFinancialResult result) {
+    final flujo = result.flujoMensual;
+    return _hero(
+      fondo: AppColors.gasto,
+      modo: result.modo,
+      eyebrowLinea: 'Este mes me faltan',
+      numero: _fmt.format(flujo.disponibleNeto.abs()),
+      subtitulo: 'Mis gastos fijos y cuotas superan lo que entra. '
+          'Bajar un gasto fijo es lo urgente.',
+    );
+  }
+
+  // Libertad · con datos: sin deuda, foco en construir patrimonio.
+  Widget _focoLibertadConDatos(MasterFinancialResult result) {
+    final flujo = result.flujoMensual;
+    return Column(
+      children: [
+        _hero(
+          fondo: AppColors.primary,
+          modo: result.modo,
+          eyebrowInline: 'cada mes invierto',
+          numero: _fmt.format(flujo.disponibleParaAhorro),
+          subtitulo: 'Sin deudas. Construyo patrimonio.',
+        ),
+        _focoTarjetas(
+          _focoTarjeta('Fondo ideal',
+              _fmt.format(flujo.fondoEmergenciaIdeal), AppColors.fondo),
+          _focoTarjeta(
+              'Disponible', _fmt.format(flujo.disponibleNeto), AppColors.ingreso),
+        ),
+      ],
+    );
+  }
+
+  // Libertad · sin datos: ya soy libre de deuda, pero no invento el ahorro.
+  Widget _focoLibertadSinDatos(MasterFinancialResult result) {
+    return _hero(
+      fondo: AppColors.primary,
+      modo: result.modo,
+      eyebrowLinea: 'Sin deudas',
+      numero: 'Libre',
+      subtitulo: 'Registro mis gastos del mes para ver cuánto puedo invertir.',
+    );
+  }
+
+  // ── Hero ──────────────────────────────────────────────────
+  Widget _hero({
+    required Color fondo,
+    required ModoFinanciero modo,
+    String? eyebrowInline,
+    String? eyebrowLinea,
+    required String numero,
+    String? subtitulo,
+  }) {
+    final header =
+        eyebrowInline == null ? modo.label : '${modo.label} · $eyebrowInline';
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.08),
+        color: fondo,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: color.withValues(alpha: 0.3)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Text(modo.emoji, style: const TextStyle(fontSize: 20)),
-              const SizedBox(width: 8),
-              Text(
-                modo.label,
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: color,
+              Text(modo.emoji, style: const TextStyle(fontSize: 14)),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  header,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white.withValues(alpha: 0.9),
+                  ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 6),
+          if (eyebrowLinea != null) ...[
+            const SizedBox(height: 10),
+            Text(
+              eyebrowLinea,
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.white.withValues(alpha: 0.72),
+              ),
+            ),
+            const SizedBox(height: 2),
+          ] else
+            const SizedBox(height: 6),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(
+              numero,
+              style: const TextStyle(
+                fontSize: 36,
+                height: 1.05,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
+            ),
+          ),
+          if (subtitulo != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              subtitulo,
+              style: TextStyle(
+                fontSize: 13,
+                height: 1.5,
+                color: Colors.white.withValues(alpha: 0.85),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  // ── Tarjetas de contexto (fuera del hero) ─────────────────
+  Widget _focoTarjetas(Widget a, Widget b) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Row(
+        children: [
+          Expanded(child: a),
+          const SizedBox(width: 10),
+          Expanded(child: b),
+        ],
+      ),
+    );
+  }
+
+  Widget _focoTarjeta(String label, String valor, Color colorValor) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
+      decoration: BoxDecoration(
+        color: Theme.of(context)
+            .colorScheme
+            .surfaceContainerHighest
+            .withValues(alpha: 0.4),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        children: [
           Text(
-            modo.descripcion,
-            style: const TextStyle(fontSize: 13),
+            label,
+            style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
           ),
-
-          // En modo ataque — la deuda es real siempre. Pero "disponible
-          // para atacar" y "libre en X" dependen del excedente, que se
-          // infla sin gastos. Solo los mostramos con datos creíbles.
-          if (modo == ModoFinanciero.ataque) ...[
-            const SizedBox(height: 12),
-            const Divider(height: 1),
-            const SizedBox(height: 12),
-            if (result.distribucion.faseTipada ==
-                FaseFinanciera.datosInsuficientes) ...[
-              // Sin datos creíbles: solo la deuda real + aviso honesto.
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  _buildBannerDato(
-                    'Deuda total',
-                    _fmt.format(flujo.totalDeudaReal),
-                    AppColors.gasto,
-                  ),
-                  Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.only(left: 16),
-                      child: Text(
-                        'Registra tus gastos del mes para calcular cuánto '
-                        'puedes destinar a atacar la deuda.',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey.shade600,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ] else ...[
-              // Con datos creíbles: el plan completo.
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  _buildBannerDato(
-                    'Deuda total',
-                    _fmt.format(flujo.totalDeudaReal),
-                    AppColors.gasto,
-                  ),
-                  _buildBannerDato(
-                    'Disponible para atacar',
-                    _fmt.format(flujo.disponibleParaDeuda),
-                    AppColors.deuda,
-                  ),
-                  _buildBannerDato(
-                    'Libre en',
-                    result.planPago.mesesParaLiberarse == 1
-                        ? '1 mes'
-                        : '${result.planPago.mesesParaLiberarse} meses',
-                    AppColors.ingreso,
-                  ),
-                ],
-              ),
-            ],
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.credit_card_outlined, size: 16),
-                label: const Text('Ver plan de deudas'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.deuda,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const DeudasScreen(),
-                    ),
-                  ).then((_) => _cargar(forzar: true));
-                },
+          const SizedBox(height: 3),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              valor,
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: colorValor,
               ),
             ),
-          ],
-
-          // En modo supervivencia — acción urgente
-          if (modo == ModoFinanciero.supervivencia) ...[
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: AppColors.gasto.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.warning_rounded,
-                      color: AppColors.gasto, size: 16),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Tus gastos fijos + cuotas de deuda superan tus ingresos. '
-                      'Reducir un gasto fijo es urgente.',
-                      style: const TextStyle(fontSize: 12, color: AppColors.gasto),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-
-          // En modo libertad — celebrar
-          if (modo == ModoFinanciero.libertad) ...[
-            const SizedBox(height: 12),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                _buildBannerDato(
-                  'Disponible',
-                  _fmt.format(flujo.disponibleNeto),
-                  AppColors.ingreso,
-                ),
-                _buildBannerDato(
-                  'Fondo ideal',
-                  _fmt.format(flujo.fondoEmergenciaIdeal),
-                  AppColors.fondo,
-                ),
-                _buildBannerDato(
-                  'Para invertir',
-                  _fmt.format(flujo.disponibleParaAhorro),
-                  AppColors.inversion,
-                ),
-              ],
-            ),
-          ],
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildBannerDato(String label, String valor, Color color) {
-    return Column(
-      children: [
-        Text(
-          valor,
-          style: TextStyle(
-            fontSize: 15,
-            fontWeight: FontWeight.bold,
-            color: color,
-          ),
-        ),
-        const SizedBox(height: 2),
-        Text(
-          label,
-          style: const TextStyle(fontSize: 11, color: Colors.grey),
-        ),
-      ],
-    );
+  String _fechaLibertad(int meses) {
+    const nombres = [
+      'ene', 'feb', 'mar', 'abr', 'may', 'jun',
+      'jul', 'ago', 'sep', 'oct', 'nov', 'dic',
+    ];
+    final hoy = DateTime.now();
+    final objetivo = DateTime(hoy.year, hoy.month + meses, 1);
+    return '${nombres[objetivo.month - 1]} ${objetivo.year}';
   }
 
-  // ── Contenido por modo ────────────────────────────────────
+  // ── Contenido por modo — tres puertas ─────────────────────
   List<Widget> _buildContenidoPorModo(MasterFinancialResult result) {
-    switch (result.modo) {
-      case ModoFinanciero.supervivencia:
-        return _contenidoSupervivencia(result);
-      case ModoFinanciero.ataque:
-        return _contenidoAtaque(result);
-      case ModoFinanciero.libertad:
-        return _contenidoLibertad(result);
-      default:
-        return [];
+    if (result.modo == ModoFinanciero.supervivencia) {
+      return _puertasSupervivencia(result);
     }
+    return _puertasNormal(result);
   }
 
-  // ── MODO SUPERVIVENCIA — solo lo urgente ──────────────────
-  List<Widget> _contenidoSupervivencia(MasterFinancialResult result) {
-    return [
-      DashboardSectionCard(
-        titulo: 'Riesgos críticos',
-        icono: Icons.warning_amber_rounded,
-        inicialmenteExpandido: true,
-        children: result.riesgos.map(_buildRiesgo).toList(),
-      ),
-      const SizedBox(height: 12),
-      DashboardSectionCard(
-        titulo: 'Qué hacer ahora',
-        icono: Icons.bolt_outlined,
-        inicialmenteExpandido: true,
-        children: result.recomendaciones.map(_buildRecomendacion).toList(),
-      ),
-      const SizedBox(height: 12),
-      DashboardSectionCard(
-        titulo: 'Tu flujo este mes',
-        icono: Icons.account_balance_wallet_outlined,
-        children: [_buildFlujoMensual(result)],
-      ),
+  // Ataque y libertad: las tres puertas completas.
+  List<Widget> _puertasNormal(MasterFinancialResult result) {
+    final datosConfiables = result.distribucion.faseTipada !=
+        FaseFinanciera.datosInsuficientes;
+
+    final hago = <Widget>[_buildDistribucion(result.distribucion)];
+    if (result.recomendaciones.isNotEmpty) {
+      _agregarBloque(hago, 'Qué hacer',
+          result.recomendaciones.map(_buildRecomendacion));
+    }
+
+    final estoy = <Widget>[];
+    if (result.insights.isNotEmpty) {
+      _agregarBloque(estoy, 'Insights', result.insights.map(_buildInsight));
+    }
+    if (result.riesgos.isNotEmpty) {
+      _agregarBloque(estoy, 'Riesgos', result.riesgos.map(_buildRiesgo));
+    }
+    if (result.fugas.isNotEmpty) {
+      _agregarBloque(estoy, 'Fugas de dinero', result.fugas.map(_buildFuga));
+    }
+    if (result.comportamiento.isNotEmpty) {
+      _agregarBloque(estoy, 'Tu comportamiento',
+          result.comportamiento.map(_buildComportamiento));
+    }
+    if (estoy.isEmpty) {
+      estoy.add(_vacioPuerta('Registra tus gastos para ver tu diagnóstico.'));
+    }
+
+    final voy = <Widget>[
+      _buildProyeccion(result.proyeccion, datosConfiables: datosConfiables),
     ];
-  }
+    if (result.estrategias.isNotEmpty) {
+      _agregarBloque(
+          voy, 'Estrategias', result.estrategias.map(_buildEstrategia));
+    }
+    _agregarBloque(voy, 'Gráficas',
+        [DashboardChartsCard(financialScore: result.scoreFinanciero)]);
 
-  // ── MODO ATAQUE — enfoque en deuda ────────────────────────
-  List<Widget> _contenidoAtaque(MasterFinancialResult result) {
     return [
       DashboardSectionCard(
-        titulo: 'Plan del mes',
+        titulo: 'Lo que hago este mes',
         icono: Icons.account_balance_wallet_outlined,
+        resumen: _resumenLoQueHago(result),
         inicialmenteExpandido: true,
-        children: [_buildDistribucion(result.distribucion)],
+        children: hago,
       ),
-      const SizedBox(height: 12),
-      if (result.insights.isNotEmpty) ...[
-        DashboardSectionCard(
-          titulo: 'Insights',
-          icono: Icons.lightbulb_outline,
-          children: result.insights.map(_buildInsight).toList(),
-        ),
-        const SizedBox(height: 12),
-      ],
+      const SizedBox(height: 10),
       DashboardSectionCard(
-        titulo: 'Recomendaciones',
-        icono: Icons.recommend_outlined,
-        children: result.recomendaciones.map(_buildRecomendacion).toList(),
-      ),
-      const SizedBox(height: 12),
-      if (result.fugas.isNotEmpty) ...[
-        DashboardSectionCard(
-          titulo: 'Fugas de dinero',
-          icono: Icons.money_off,
-          children: result.fugas.map(_buildFuga).toList(),
-        ),
-        const SizedBox(height: 12),
-      ],
-      if (result.estrategias.isNotEmpty) ...[
-        DashboardSectionCard(
-          titulo: 'Estrategias',
-          icono: Icons.flag_outlined,
-          children: result.estrategias.map(_buildEstrategia).toList(),
-        ),
-        const SizedBox(height: 12),
-      ],
-      DashboardSectionCard(
-        titulo: 'Gráficas financieras',
-        icono: Icons.bar_chart,
+        titulo: 'Cómo estoy',
+        icono: Icons.psychology_outlined,
+        resumen: _resumenComoEstoy(result),
         inicialmenteExpandido: false,
-        children: [
-          DashboardChartsCard(financialScore: result.scoreFinanciero),
-        ],
+        children: estoy,
       ),
-      const SizedBox(height: 12),
+      const SizedBox(height: 10),
       DashboardSectionCard(
-        titulo: 'Proyección a 12 meses',
+        titulo: 'Hacia dónde voy',
         icono: Icons.show_chart,
+        resumen: _resumenHaciaDonde(result),
         inicialmenteExpandido: false,
-        children: [
-          _buildProyeccion(
-            result.proyeccion,
-            datosConfiables: result.distribucion.faseTipada !=
-                FaseFinanciera.datosInsuficientes,
-          ),
-        ],
-      ),
-      const SizedBox(height: 12),
-      if (result.comportamiento.isNotEmpty) ...[
-        DashboardSectionCard(
-          titulo: 'Tu comportamiento financiero',
-          icono: Icons.psychology_outlined,
-          inicialmenteExpandido: false,
-          children: result.comportamiento.map(_buildComportamiento).toList(),
-        ),
-        const SizedBox(height: 12),
-      ],
-      DashboardSectionCard(
-        titulo: 'Riesgos',
-        icono: Icons.warning_amber_rounded,
-        inicialmenteExpandido: false,
-        children: result.riesgos.map(_buildRiesgo).toList(),
+        children: voy,
       ),
     ];
   }
 
-  // ── MODO LIBERTAD — enfoque en patrimonio ─────────────────
-  List<Widget> _contenidoLibertad(MasterFinancialResult result) {
+  // Supervivencia: solo lo urgente, dos puertas, ambas abiertas.
+  List<Widget> _puertasSupervivencia(MasterFinancialResult result) {
+    final hago = <Widget>[];
+    if (result.recomendaciones.isNotEmpty) {
+      hago.addAll(result.recomendaciones.map(_buildRecomendacion));
+    } else {
+      hago.add(_vacioPuerta('Reduce un gasto fijo para volver a flote.'));
+    }
+
+    final estoy = <Widget>[];
+    if (result.riesgos.isNotEmpty) {
+      _agregarBloque(
+          estoy, 'Riesgos críticos', result.riesgos.map(_buildRiesgo));
+    }
+    _agregarBloque(estoy, 'Mi flujo este mes', [_buildFlujoMensual(result)]);
+    if (result.fugas.isNotEmpty) {
+      _agregarBloque(estoy, 'Fugas de dinero', result.fugas.map(_buildFuga));
+    }
+
     return [
       DashboardSectionCard(
-        titulo: 'Tu proyección de crecimiento',
-        icono: Icons.show_chart,
-        inicialmenteExpandido: true,
-        children: [
-          _buildProyeccion(
-            result.proyeccion,
-            datosConfiables: result.distribucion.faseTipada !=
-                FaseFinanciera.datosInsuficientes,
-          ),
-        ],
-      ),
-      const SizedBox(height: 12),
-      DashboardSectionCard(
-        titulo: 'Plan del mes',
+        titulo: 'Lo que hago este mes',
         icono: Icons.account_balance_wallet_outlined,
+        resumen: 'Acciones urgentes',
         inicialmenteExpandido: true,
-        children: [_buildDistribucion(result.distribucion)],
+        children: hago,
       ),
-      const SizedBox(height: 12),
-      if (result.estrategias.isNotEmpty) ...[
-        DashboardSectionCard(
-          titulo: 'Estrategias de crecimiento',
-          icono: Icons.flag_outlined,
-          children: result.estrategias.map(_buildEstrategia).toList(),
-        ),
-        const SizedBox(height: 12),
-      ],
-      if (result.insights.isNotEmpty) ...[
-        DashboardSectionCard(
-          titulo: 'Insights',
-          icono: Icons.lightbulb_outline,
-          children: result.insights.map(_buildInsight).toList(),
-        ),
-        const SizedBox(height: 12),
-      ],
+      const SizedBox(height: 10),
       DashboardSectionCard(
-        titulo: 'Gráficas financieras',
-        icono: Icons.bar_chart,
-        children: [
-          DashboardChartsCard(financialScore: result.scoreFinanciero),
-        ],
+        titulo: 'Cómo estoy',
+        icono: Icons.psychology_outlined,
+        resumen: _resumenComoEstoy(result),
+        inicialmenteExpandido: true,
+        children: estoy,
       ),
-      const SizedBox(height: 12),
-      if (result.comportamiento.isNotEmpty) ...[
-        DashboardSectionCard(
-          titulo: 'Tu comportamiento financiero',
-          icono: Icons.psychology_outlined,
-          inicialmenteExpandido: false,
-          children: result.comportamiento.map(_buildComportamiento).toList(),
-        ),
-        const SizedBox(height: 12),
-      ],
-      if (result.fugas.isNotEmpty) ...[
-        DashboardSectionCard(
-          titulo: 'Fugas de dinero',
-          icono: Icons.money_off,
-          inicialmenteExpandido: false,
-          children: result.fugas.map(_buildFuga).toList(),
-        ),
-        const SizedBox(height: 12),
-      ],
     ];
+  }
+
+  // ── Helpers de las puertas ────────────────────────────────
+  void _agregarBloque(
+    List<Widget> children,
+    String label,
+    Iterable<Widget> items,
+  ) {
+    if (children.isNotEmpty) {
+      children.add(const SizedBox(height: 14));
+      children.add(const Divider(height: 1));
+      children.add(const SizedBox(height: 14));
+    }
+    children.add(
+      Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0.2,
+            color: Colors.grey.shade600,
+          ),
+        ),
+      ),
+    );
+    children.addAll(items);
+  }
+
+  Widget _vacioPuerta(String texto) {
+    return Text(
+      texto,
+      style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+    );
+  }
+
+  String _resumenLoQueHago(MasterFinancialResult result) {
+    final d = result.distribucion;
+    if (d.faseTipada == FaseFinanciera.datosInsuficientes) {
+      return 'Faltan tus gastos del mes';
+    }
+    if (result.modo == ModoFinanciero.supervivencia) {
+      return 'Acciones urgentes';
+    }
+    if (d.montoDeuda > 0) {
+      return '${_fmt.format(d.montoDeuda)} a la deuda este mes';
+    }
+    return 'Fondo y metas en marcha';
+  }
+
+  String _resumenComoEstoy(MasterFinancialResult result) {
+    final r = result.riesgos.length;
+    final f = result.fugas.length;
+    final partes = <String>[];
+    if (r > 0) partes.add('$r ${r == 1 ? 'alerta' : 'alertas'}');
+    if (f > 0) partes.add('$f ${f == 1 ? 'fuga' : 'fugas'}');
+    if (partes.isEmpty) {
+      return result.distribucion.faseTipada ==
+              FaseFinanciera.datosInsuficientes
+          ? 'Registra tus gastos para ver tu situación'
+          : 'Sin alertas por ahora';
+    }
+    return partes.join(' · ');
+  }
+
+  String _resumenHaciaDonde(MasterFinancialResult result) {
+    if (result.distribucion.faseTipada ==
+        FaseFinanciera.datosInsuficientes) {
+      return 'Proyección al registrar tus gastos';
+    }
+    return 'Ahorro ${_fmt.format(result.proyeccion.ahorro12Meses)} en 12 meses';
   }
 
   // ── Estado vacío ──────────────────────────────────────────
