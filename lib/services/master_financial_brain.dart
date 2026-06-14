@@ -114,9 +114,11 @@ class MasterFinancialBrain {
     // PASO 8: Insights, riesgos, recomendaciones, comportamiento
     // Todos consumen flujo — sin llamadas redundantes a la DB
     final insights = _generarInsights(flujo, modo, confianza);
-    final riesgos = _generarRiesgos(flujo, modo);
-    final recomendaciones = _generarRecomendaciones(flujo, modo, planPago);
-    final estrategias = _generarEstrategias(flujo, modo, proyeccion);
+    final riesgos = _generarRiesgos(flujo, modo, datosSuficientesParaPlan);
+    final recomendaciones = _generarRecomendaciones(
+        flujo, modo, planPago, datosSuficientesParaPlan);
+    final estrategias =
+        _generarEstrategias(flujo, modo, proyeccion, datosSuficientesParaPlan);
     final comportamiento = _analizarComportamiento(movimientosHistorico);
     final fugas = _detectarFugas(movimientosMes, flujo.ingresos);
 
@@ -465,6 +467,7 @@ class MasterFinancialBrain {
   List<FinancialRisk> _generarRiesgos(
     FlujoMensual flujo,
     ModoFinanciero modo,
+    bool datosSuficientes,
   ) {
     final riesgos = <FinancialRisk>[];
 
@@ -472,6 +475,29 @@ class MasterFinancialBrain {
       riesgos.add(FinancialRisk(
         titulo: 'Sin datos para analizar',
         descripcion: 'Registra movimientos para detectar riesgos.',
+        nivel: 'bajo',
+      ));
+      return riesgos;
+    }
+
+    // Sin datos creíbles, una deuda alta SÍ es un riesgo real (no depende
+    // del mes), pero NO afirmamos "sin riesgos, todo en orden" — eso sería
+    // mentir sobre un panorama que no conocemos.
+    if (!datosSuficientes) {
+      if (flujo.ratioDeuda > 1) {
+        riesgos.add(FinancialRisk(
+          titulo: 'Deuda alta',
+          descripcion:
+              'Tu deuda equivale a ${flujo.ratioDeuda.toStringAsFixed(1)} '
+              'meses de ingresos. Es un riesgo real a atacar.',
+          nivel: 'alto',
+        ));
+      }
+      riesgos.add(FinancialRisk(
+        titulo: 'Faltan datos del mes',
+        descripcion:
+            'Registra tus gastos para evaluar tus riesgos financieros '
+            'con precisión.',
         nivel: 'bajo',
       ));
       return riesgos;
@@ -541,6 +567,7 @@ class MasterFinancialBrain {
     FlujoMensual flujo,
     ModoFinanciero modo,
     PlanPago planPago,
+    bool datosSuficientes,
   ) {
     final recs = <FinancialRecommendation>[];
 
@@ -549,6 +576,21 @@ class MasterFinancialBrain {
         titulo: 'Empieza a registrar',
         descripcion: 'Aún no hay datos para recomendaciones personalizadas.',
         impacto: 'Con una semana de registros el análisis mejora mucho.',
+      ));
+      return recs;
+    }
+
+    // Sin datos creíbles no recomendamos sobre un excedente inflado.
+    // La única recomendación honesta es completar los datos.
+    if (!datosSuficientes) {
+      recs.add(FinancialRecommendation(
+        titulo: 'Registra tus gastos del mes',
+        descripcion:
+            'Con tus ingresos y deudas ya puedo ver parte del panorama, '
+            'pero necesito tus gastos para recomendarte cómo distribuir '
+            'tu dinero con precisión.',
+        impacto:
+            'Es el paso que desbloquea tu plan de ataque a la deuda real.',
       ));
       return recs;
     }
@@ -611,9 +653,15 @@ class MasterFinancialBrain {
     FlujoMensual flujo,
     ModoFinanciero modo,
     FinancialProjection proyeccion,
+    bool datosSuficientes,
   ) {
     final estrategias = <FinancialStrategy>[];
     if (modo == ModoFinanciero.sinDatos) return estrategias;
+
+    // Sin datos creíbles no proponemos estrategias sobre cifras infladas.
+    // (El "método bola de nieve" no depende del excedente, pero las que
+    // calculan montos sí; preferimos no mostrar ninguna hasta tener datos.)
+    if (!datosSuficientes) return estrategias;
 
     if (modo == ModoFinanciero.ataque) {
       estrategias.add(FinancialStrategy(
