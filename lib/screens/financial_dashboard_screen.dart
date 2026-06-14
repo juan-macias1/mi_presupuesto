@@ -222,32 +222,64 @@ class _FinancialDashboardScreenState
             style: const TextStyle(fontSize: 13),
           ),
 
-          // En modo ataque — mostrar el número clave: fecha de libertad
-          if (modo == ModoFinanciero.ataque &&
-              result.planPago.mesesParaLiberarse > 0) ...[
+          // En modo ataque — la deuda es real siempre. Pero "disponible
+          // para atacar" y "libre en X" dependen del excedente, que se
+          // infla sin gastos. Solo los mostramos con datos creíbles.
+          if (modo == ModoFinanciero.ataque) ...[
             const SizedBox(height: 12),
             const Divider(height: 1),
             const SizedBox(height: 12),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                _buildBannerDato(
-                  'Deuda total',
-                  _fmt.format(flujo.totalDeudaReal),
-                  AppColors.gasto,
-                ),
-                _buildBannerDato(
-                  'Disponible para atacar',
-                  _fmt.format(flujo.disponibleParaDeuda),
-                  AppColors.deuda,
-                ),
-                _buildBannerDato(
-                  'Libre en',
-                  '${result.planPago.mesesParaLiberarse} meses',
-                  AppColors.ingreso,
-                ),
-              ],
-            ),
+            if (result.distribucion.faseTipada ==
+                FaseFinanciera.datosInsuficientes) ...[
+              // Sin datos creíbles: solo la deuda real + aviso honesto.
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  _buildBannerDato(
+                    'Deuda total',
+                    _fmt.format(flujo.totalDeudaReal),
+                    AppColors.gasto,
+                  ),
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.only(left: 16),
+                      child: Text(
+                        'Registra tus gastos del mes para calcular cuánto '
+                        'puedes destinar a atacar la deuda.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ] else ...[
+              // Con datos creíbles: el plan completo.
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  _buildBannerDato(
+                    'Deuda total',
+                    _fmt.format(flujo.totalDeudaReal),
+                    AppColors.gasto,
+                  ),
+                  _buildBannerDato(
+                    'Disponible para atacar',
+                    _fmt.format(flujo.disponibleParaDeuda),
+                    AppColors.deuda,
+                  ),
+                  _buildBannerDato(
+                    'Libre en',
+                    result.planPago.mesesParaLiberarse == 1
+                        ? '1 mes'
+                        : '${result.planPago.mesesParaLiberarse} meses',
+                    AppColors.ingreso,
+                  ),
+                ],
+              ),
+            ],
             const SizedBox(height: 12),
             SizedBox(
               width: double.infinity,
@@ -440,7 +472,13 @@ class _FinancialDashboardScreenState
         titulo: 'Proyección a 12 meses',
         icono: Icons.show_chart,
         inicialmenteExpandido: false,
-        children: [_buildProyeccion(result.proyeccion)],
+        children: [
+          _buildProyeccion(
+            result.proyeccion,
+            datosConfiables: result.distribucion.faseTipada !=
+                FaseFinanciera.datosInsuficientes,
+          ),
+        ],
       ),
       const SizedBox(height: 12),
       if (result.comportamiento.isNotEmpty) ...[
@@ -468,7 +506,13 @@ class _FinancialDashboardScreenState
         titulo: 'Tu proyección de crecimiento',
         icono: Icons.show_chart,
         inicialmenteExpandido: true,
-        children: [_buildProyeccion(result.proyeccion)],
+        children: [
+          _buildProyeccion(
+            result.proyeccion,
+            datosConfiables: result.distribucion.faseTipada !=
+                FaseFinanciera.datosInsuficientes,
+          ),
+        ],
       ),
       const SizedBox(height: 12),
       DashboardSectionCard(
@@ -769,7 +813,34 @@ class _FinancialDashboardScreenState
     );
   }
 
-  Widget _buildProyeccion(FinancialProjection p) {
+  Widget _buildProyeccion(FinancialProjection p, {bool datosConfiables = true}) {
+    // Sin datos creíbles la proyección se infla (ahorro irreal). En vez de
+    // afirmar un número falso, lo decimos honestamente.
+    if (!datosConfiables) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.grey.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.grey.withValues(alpha: 0.2)),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.show_chart, color: Colors.grey.shade500, size: 18),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Registra tus gastos del mes para proyectar tu ahorro a '
+                'futuro de forma realista.',
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -817,6 +888,60 @@ class _FinancialDashboardScreenState
   }
 
   Widget _buildDistribucion(FinancialDistribution d) {
+    // Datos insuficientes: no mostramos un plan sobre un excedente irreal.
+    // Pedimos honestamente los gastos que faltan.
+    if (d.faseTipada == FaseFinanciera.datosInsuficientes) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: AppColors.fondo.withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppColors.fondo.withValues(alpha: 0.20)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.receipt_long_outlined,
+                    color: Colors.grey.shade600, size: 18),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    'Faltan tus gastos del mes',
+                    style:
+                        TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              d.mensaje,
+              style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
+            ),
+            const SizedBox(height: 14),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('Registrar gastos'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     Color colorFase;
     IconData iconoFase;
 

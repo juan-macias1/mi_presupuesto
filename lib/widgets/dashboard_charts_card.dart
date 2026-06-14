@@ -235,7 +235,9 @@ class _DashboardChartsCardState extends State<DashboardChartsCard> {
   Widget _buildScoreChart() {
     final score = widget.financialScore.toDouble();
 
-    if (score == 0) {
+    // score <= 0 cubre dos casos: 0 (sin movimientos) y -1 (datos
+    // insuficientes para calcular). En ambos no mostramos un número.
+    if (score <= 0) {
       return Container(
         width: double.infinity,
         padding: const EdgeInsets.all(12),
@@ -248,9 +250,11 @@ class _DashboardChartsCardState extends State<DashboardChartsCard> {
           children: [
             Icon(Icons.info_outline, color: Colors.grey, size: 16),
             SizedBox(width: 8),
-            Text(
-              'Registra movimientos para ver tu score financiero.',
-              style: TextStyle(fontSize: 12, color: Colors.grey),
+            Expanded(
+              child: Text(
+                'Registra tus gastos del mes para calcular tu score.',
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
             ),
           ],
         ),

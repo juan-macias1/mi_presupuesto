@@ -89,8 +89,21 @@ class MasterFinancialBrain {
           )
         : PlanPago.sinDeudas();
 
-    // PASO 5: FinancialDistribution — basada en flujo real
-    final distribucion = await _distributionEngine.calcularDistribucion();
+    // PASO 5: FinancialDistribution — consume el flujo (única fuente).
+    // Calculamos la confianza acá porque la distribución la necesita:
+    // si no hay datos creíbles, no inventamos un plan sobre excedente irreal.
+    final confianza = _calcularConfianza(movimientosMes.length);
+    // Los gastos deben ser proporcionalmente creíbles, no solo > 0.
+    // Nadie vive gastando una fracción ínfima de su ingreso; si los gastos
+    // registrados son <15% del ingreso, claramente faltan gastos por cargar.
+    final hayGastosCreibles =
+        flujo.ingresos > 0 && flujo.gastosOperativos >= flujo.ingresos * 0.15;
+    final datosSuficientesParaPlan =
+        confianza != NivelConfianza.insuficiente && hayGastosCreibles;
+    final distribucion = _distributionEngine.calcular(
+      flujo,
+      hayDatosSuficientes: datosSuficientesParaPlan,
+    );
 
     // PASO 6: FinancialAnalysis — construido desde flujo (no recalcula)
     final analysis = _construirAnalysis(flujo, planPago);
@@ -100,7 +113,6 @@ class MasterFinancialBrain {
 
     // PASO 8: Insights, riesgos, recomendaciones, comportamiento
     // Todos consumen flujo — sin llamadas redundantes a la DB
-    final confianza = _calcularConfianza(movimientosMes.length);
     final insights = _generarInsights(flujo, modo, confianza);
     final riesgos = _generarRiesgos(flujo, modo);
     final recomendaciones = _generarRecomendaciones(flujo, modo, planPago);
@@ -108,8 +120,10 @@ class MasterFinancialBrain {
     final comportamiento = _analizarComportamiento(movimientosHistorico);
     final fugas = _detectarFugas(movimientosMes, flujo.ingresos);
 
-    // PASO 9: Score financiero
-    final score = _calcularScore(flujo);
+    // PASO 9: Score financiero — solo si los datos son creíbles.
+    // Sin gastos reales el score se infla (da 93 con deuda alta), así que
+    // devolvemos -1 = "no calculable" y el widget lo muestra honestamente.
+    final score = datosSuficientesParaPlan ? _calcularScore(flujo) : -1;
 
     // PASO 10: Contexto IA — string completo listo para Claude
     final contextoIA = _construirContextoIA(

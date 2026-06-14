@@ -56,6 +56,51 @@ class DashboardScoreCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Score -1 = no calculable (faltan gastos creíbles este mes).
+    // No inventamos un número; lo decimos honestamente.
+    if (score < 0) {
+      return Card(
+        elevation: 0,
+        margin: const EdgeInsets.only(bottom: 16),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(color: Colors.grey.withValues(alpha: 0.20)),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Row(
+            children: [
+              Icon(Icons.help_outline,
+                  color: Colors.grey.shade500, size: 32),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Score Financiero',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Registra tus gastos del mes para calcular tu score.',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.grey.shade600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     final visual = _visual;
     final textoMensaje = mensaje ?? visual.mensajeDefault;
 

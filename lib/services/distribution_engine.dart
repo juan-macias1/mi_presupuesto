@@ -1,70 +1,54 @@
-import '../db/database_helper.dart';
-import '../models/movimiento.dart';
 import '../models/financial_distribution.dart';
+import '../models/flujo_mensual.dart';
 
+/// DistributionEngine — calcula cómo distribuir el excedente del mes.
+///
+/// IMPORTANTE: ya NO lee la base de datos por su cuenta. Consume el
+/// FlujoMensual que el MasterFinancialBrain ya calculó (única fuente de
+/// verdad, mes correcto). Antes recalculaba con el histórico completo, lo
+/// que producía un excedente inflado e inconsistente con el resto de la app.
 class DistributionEngine {
-  final db = DatabaseHelper.instance;
+  /// Calcula la distribución a partir del flujo del mes.
+  ///
+  /// [hayDatosSuficientes]: si es false (confianza insuficiente o sin
+  /// gastos creíbles), NO inventamos un plan sobre un excedente irreal —
+  /// devolvemos el estado 'datos insuficientes' que pide cargar gastos.
+  FinancialDistribution calcular(
+    FlujoMensual flujo, {
+    required bool hayDatosSuficientes,
+  }) {
+    // Guard 1: sin ingresos, no hay nada que distribuir.
+    if (flujo.ingresos <= 0) {
+      return FinancialDistribution.empty();
+    }
 
-  Future<FinancialDistribution> calcularDistribucion() async {
-    final movimientosMap = await db.obtenerMovimientos();
-    List<Movimiento> movimientos = movimientosMap
-        .map((m) => Movimiento.fromMap(m))
-        .toList();
-
-    // Guard: sin datos
-    if (movimientos.isEmpty) {
-      return FinancialDistribution(
-        ingresos: 0,
-        gastosFijos: 0,
-        excedenteReal: 0,
-        fase: "SIN_DATOS",
-        descripcionFase:
-            "Registra tus movimientos para ver tu plan de distribución.",
-        porcentajeDeuda: 0,
-        porcentajeFondo: 0,
-        porcentajeMetas: 0,
-        montoDeuda: 0,
-        montoFondo: 0,
-        montoMetas: 0,
-        mesesParaSalirDeDeuda: 0,
-        mesesParaFondoCompleto: 0,
-        fondoEmergenciaObjetivo: 0,
-        mensaje: "Comienza registrando tus ingresos y gastos fijos.",
+    // Guard 2: datos insuficientes — el corazón del arreglo de raíz.
+    // Si no podemos confiar en los gastos, no calculamos distribución:
+    // sería repartir un excedente que no existe de verdad.
+    if (!hayDatosSuficientes) {
+      return FinancialDistribution.datosInsuficientes(
+        ingresos: flujo.ingresos,
       );
     }
 
-    // ── Calcular totales ──────────────────────────────────────────────────────
-    double ingresos = 0;
-    double gastosFijos = 0;
-    double gastosVariables = 0;
-    double totalDeuda = 0;
+    final ingresos = flujo.ingresos;
+    final gastosFijos = flujo.gastosFijos;
+    final totalDeuda = flujo.totalDeudaReal;
 
-    for (var m in movimientos) {
-      if (m.tipo == "ingreso") {
-        ingresos += m.valor;
-      } else if (m.tipo == "gasto") {
-        if (m.esDeuda) {
-          // Las deudas se cuentan SOLO como deuda, nunca como gasto operativo
-          totalDeuda += m.valor;
-        } else if (m.esFijo) {
-          gastosFijos += m.valor;
-        } else {
-          gastosVariables += m.valor;
-        }
-      }
-    }
+    // Excedente real desde el flujo: lo que queda tras gastos operativos
+    // y cuotas de deuda. Usamos disponibleNeto, que ya está bien calculado.
+    final excedenteReal = flujo.disponibleNeto;
 
-    // Excedente real = lo que queda después de gastos fijos (sin contar deudas aún)
-    double excedenteReal = ingresos - gastosFijos - gastosVariables - totalDeuda;
-
+    // Guard 3: sin excedente, fase crítica.
     if (excedenteReal <= 0) {
       return FinancialDistribution(
         ingresos: ingresos,
         gastosFijos: gastosFijos,
         excedenteReal: excedenteReal,
-        fase: "CRITICA",
+        fase: 'CRITICA',
         descripcionFase:
-            "Tus gastos e deudas consumen todos tus ingresos. Es urgente reducir gastos variables.",
+            'Tus gastos y deudas consumen todos tus ingresos. '
+            'Es urgente reducir un gasto.',
         porcentajeDeuda: 0,
         porcentajeFondo: 0,
         porcentajeMetas: 0,
@@ -75,12 +59,13 @@ class DistributionEngine {
         mesesParaFondoCompleto: 0,
         fondoEmergenciaObjetivo: gastosFijos * 6,
         mensaje:
-            "No queda excedente después de gastos y deudas. Reducir al menos un gasto variable cambiaría tu situación.",
+            'No queda excedente después de gastos y deudas. Reducir al menos '
+            'un gasto variable cambiaría tu situación.',
       );
     }
 
-    // ── Determinar fase ───────────────────────────────────────────────────────
-    double ratioDeuda = ingresos == 0 ? 0 : totalDeuda / ingresos;
+    // ── Determinar fase según ratio de deuda ──
+    final ratioDeuda = ingresos == 0 ? 0.0 : totalDeuda / ingresos;
 
     String fase;
     String descripcionFase;
@@ -89,67 +74,55 @@ class DistributionEngine {
     double porcentajeMetas;
 
     if (ratioDeuda > 1.0) {
-      // FASE CRÍTICA: deuda supera ingresos
-      fase = "CRITICA";
+      fase = 'CRITICA';
       descripcionFase =
-          "Tu deuda es mayor que tus ingresos. El enfoque ahora es eliminarla agresivamente.";
+          'Tu deuda es mayor que tus ingresos. El enfoque ahora es '
+          'eliminarla agresivamente.';
       porcentajeDeuda = 0.70;
       porcentajeFondo = 0.20;
       porcentajeMetas = 0.10;
     } else if (ratioDeuda > 0.3) {
-      // FASE MODERADA: deuda manejable pero significativa
-      fase = "MODERADA";
+      fase = 'MODERADA';
       descripcionFase =
-          "Tienes deuda manejable. Equilibrar deuda, fondo y metas es la clave ahora.";
+          'Tienes deuda manejable. Equilibrar deuda, fondo y metas es la '
+          'clave ahora.';
       porcentajeDeuda = 0.50;
       porcentajeFondo = 0.30;
       porcentajeMetas = 0.20;
     } else {
-      // FASE ESTABLE: sin deuda o deuda mínima
-      fase = "ESTABLE";
+      fase = 'ESTABLE';
       descripcionFase =
-          "Tus finanzas están estables. Es momento de construir patrimonio.";
+          'Tus finanzas están estables. Es momento de construir patrimonio.';
       porcentajeDeuda = totalDeuda > 0 ? 0.10 : 0.0;
       porcentajeFondo = 0.40;
       porcentajeMetas = totalDeuda > 0 ? 0.50 : 0.60;
     }
 
-    // ── Calcular montos concretos ─────────────────────────────────────────────
-    double montoDeuda = excedenteReal * porcentajeDeuda;
-    double montoFondo = excedenteReal * porcentajeFondo;
-    double montoMetas = excedenteReal * porcentajeMetas;
+    final montoDeuda = excedenteReal * porcentajeDeuda;
+    final montoFondo = excedenteReal * porcentajeFondo;
+    final montoMetas = excedenteReal * porcentajeMetas;
 
-    // ── Proyecciones ──────────────────────────────────────────────────────────
+    // ── Proyecciones ──
     int mesesParaSalirDeDeuda = 0;
     if (montoDeuda > 0 && totalDeuda > 0) {
       mesesParaSalirDeDeuda = (totalDeuda / montoDeuda).ceil();
     }
 
-    // Fondo basado en gastos FIJOS (lo mínimo para sobrevivir)
-    double fondoObjetivo = gastosFijos * 6;
+    final fondoObjetivo = gastosFijos * 6;
     int mesesParaFondo = 0;
     if (montoFondo > 0 && fondoObjetivo > 0) {
       mesesParaFondo = (fondoObjetivo / montoFondo).ceil();
     }
 
-    // ── Mensaje personalizado ─────────────────────────────────────────────────
-    String mensaje;
-    if (fase == "CRITICA") {
-      mensaje =
-          "Con \$${montoDeuda.toStringAsFixed(0)} mensuales al pago de deuda, "
-          "saldrías de ella en $mesesParaSalirDeDeuda meses. "
-          "Mientras tanto, destina \$${montoFondo.toStringAsFixed(0)} a tu fondo de emergencia.";
-    } else if (fase == "MODERADA") {
-      mensaje =
-          "Destinando \$${montoDeuda.toStringAsFixed(0)} a deuda y "
-          "\$${montoFondo.toStringAsFixed(0)} al fondo de emergencia, "
-          "en $mesesParaSalirDeDeuda meses estarías libre de deuda "
-          "y en $mesesParaFondo meses tendrías tu fondo completo.";
-    } else {
-      mensaje =
-          "Puedes destinar \$${montoMetas.toStringAsFixed(0)} mensuales a tus metas e inversión. "
-          "Tu fondo de emergencia estaría completo en $mesesParaFondo meses.";
-    }
+    // ── Mensaje (con plurales correctos) ──
+    final mensaje = _construirMensaje(
+      fase: fase,
+      montoDeuda: montoDeuda,
+      montoFondo: montoFondo,
+      montoMetas: montoMetas,
+      mesesParaSalirDeDeuda: mesesParaSalirDeDeuda,
+      mesesParaFondo: mesesParaFondo,
+    );
 
     return FinancialDistribution(
       ingresos: ingresos,
@@ -168,5 +141,44 @@ class DistributionEngine {
       fondoEmergenciaObjetivo: fondoObjetivo,
       mensaje: mensaje,
     );
+  }
+
+  /// Helper de plurales: "1 mes" vs "2 meses", y evita el "0 meses" feo.
+  String _meses(int n) => n == 1 ? '1 mes' : '$n meses';
+
+  String _construirMensaje({
+    required String fase,
+    required double montoDeuda,
+    required double montoFondo,
+    required double montoMetas,
+    required int mesesParaSalirDeDeuda,
+    required int mesesParaFondo,
+  }) {
+    String fmt(double v) => v.toStringAsFixed(0);
+
+    if (fase == 'CRITICA') {
+      final libre = mesesParaSalirDeDeuda > 0
+          ? ' Saldrías de ella en ${_meses(mesesParaSalirDeDeuda)}.'
+          : '';
+      return 'Destina \$${fmt(montoDeuda)} mensuales al pago de deuda.$libre '
+          'Mientras tanto, aparta \$${fmt(montoFondo)} para tu fondo de '
+          'emergencia.';
+    } else if (fase == 'MODERADA') {
+      final libre = mesesParaSalirDeDeuda > 0
+          ? 'en ${_meses(mesesParaSalirDeDeuda)} estarías libre de deuda'
+          : 'avanzarías con tu deuda';
+      final fondo = mesesParaFondo > 0
+          ? ' y en ${_meses(mesesParaFondo)} tendrías tu fondo completo'
+          : '';
+      return 'Destinando \$${fmt(montoDeuda)} a deuda y \$${fmt(montoFondo)} '
+          'al fondo, $libre$fondo.';
+    } else {
+      final fondo = mesesParaFondo > 0
+          ? ' Tu fondo de emergencia estaría completo en '
+              '${_meses(mesesParaFondo)}.'
+          : '';
+      return 'Puedes destinar \$${fmt(montoMetas)} mensuales a tus metas e '
+          'inversión.$fondo';
+    }
   }
 }

@@ -1,12 +1,15 @@
 // FIX #1: enum para fase — elimina typos silenciosos
 enum FaseFinanciera {
   sinDatos,
+  datosInsuficientes,
   critica,
   moderada,
   estable;
 
   static FaseFinanciera fromString(String valor) {
     switch (valor.toUpperCase()) {
+      case 'DATOS_INSUFICIENTES':
+        return FaseFinanciera.datosInsuficientes;
       case 'CRITICA':
         return FaseFinanciera.critica;
       case 'MODERADA':
@@ -22,6 +25,8 @@ enum FaseFinanciera {
     switch (this) {
       case FaseFinanciera.sinDatos:
         return 'SIN_DATOS';
+      case FaseFinanciera.datosInsuficientes:
+        return 'DATOS_INSUFICIENTES';
       case FaseFinanciera.critica:
         return 'CRITICA';
       case FaseFinanciera.moderada:
@@ -80,6 +85,34 @@ class FinancialDistribution {
 
   // FIX #1: getter tipado para usar el enum cuando convenga
   FaseFinanciera get faseTipada => FaseFinanciera.fromString(fase);
+
+  /// Estado cuando hay ingresos pero faltan gastos creíbles para calcular
+  /// un plan real. No inventamos una distribución sobre un excedente
+  /// inflado — pedimos los datos que faltan.
+  factory FinancialDistribution.datosInsuficientes({
+    required double ingresos,
+  }) {
+    return FinancialDistribution(
+      ingresos: ingresos,
+      gastosFijos: 0,
+      excedenteReal: 0,
+      fase: 'DATOS_INSUFICIENTES',
+      descripcionFase:
+          'Registra tus gastos del mes para calcular tu plan real.',
+      porcentajeDeuda: 0,
+      porcentajeFondo: 0,
+      porcentajeMetas: 0,
+      montoDeuda: 0,
+      montoFondo: 0,
+      montoMetas: 0,
+      mesesParaSalirDeDeuda: 0,
+      mesesParaFondoCompleto: 0,
+      fondoEmergenciaObjetivo: 0,
+      mensaje:
+          'Tienes ingresos registrados pero faltan tus gastos del mes. '
+          'Cárgalos para que pueda darte un plan de distribución confiable.',
+    );
+  }
 
   // FIX #5: factory para estado vacío/inicial
   factory FinancialDistribution.empty() {
