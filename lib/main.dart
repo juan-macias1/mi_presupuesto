@@ -522,7 +522,7 @@ class _MyHomePageState extends State<MyHomePage> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text("Eliminar", style: TextStyle(color: Colors.red)),
+            child: Text("Eliminar", style: TextStyle(color: AppColors.gasto)),
           ),
         ],
       ),
@@ -1374,7 +1374,7 @@ class _MyHomePageState extends State<MyHomePage> {
         padding: const EdgeInsets.symmetric(horizontal: 20),
         margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
         decoration: BoxDecoration(
-          color: Colors.blue,
+          color: AppColors.fondo,
           borderRadius: BorderRadius.circular(16),
         ),
         child: const Row(
@@ -1396,7 +1396,7 @@ class _MyHomePageState extends State<MyHomePage> {
         padding: const EdgeInsets.symmetric(horizontal: 20),
         margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
         decoration: BoxDecoration(
-          color: Colors.red,
+          color: AppColors.gasto,
           borderRadius: BorderRadius.circular(16),
         ),
         child: const Row(
@@ -1440,7 +1440,7 @@ class _MyHomePageState extends State<MyHomePage> {
                   ? (m['valor'] as num).toDouble()
                   : 0.0;
               final bool esIngreso = m['tipo'] == 'ingreso';
-              final color = esIngreso ? Colors.green : Colors.red;
+              final color = esIngreso ? AppColors.ingreso : AppColors.gasto;
 
               return Row(
                 crossAxisAlignment: CrossAxisAlignment.center,
@@ -1552,14 +1552,14 @@ class _MyHomePageState extends State<MyHomePage> {
                                 vertical: 2,
                               ),
                               decoration: BoxDecoration(
-                                color: Colors.orange.withValues(alpha: 0.1),
+                                color: AppColors.deuda.withValues(alpha: 0.1),
                                 borderRadius: BorderRadius.circular(6),
                               ),
                               child: const Text(
                                 'Deuda',
                                 style: TextStyle(
                                   fontSize: 10,
-                                  color: Colors.orange,
+                                  color: AppColors.deuda,
                                   fontWeight: FontWeight.w600,
                                 ),
                               ),
@@ -1629,15 +1629,15 @@ class _MyHomePageState extends State<MyHomePage> {
         : (totalGastos / totalIngresos).clamp(0.0, 1.0).toDouble();
 
     Color colorBarra = ratioGasto < 0.6
-        ? Colors.green
+        ? AppColors.ingreso
         : ratioGasto < 0.8
-        ? Colors.orange
-        : Colors.red;
+        ? AppColors.deuda
+        : AppColors.gasto;
 
     Color balanceColor = balance > 0.01
-        ? const Color(0xFF1B5E20)
+        ? AppColors.balancePositivo
         : balance < -0.01
-        ? const Color(0xFFB71C1C)
+        ? AppColors.balanceNegativo
         : Colors.grey.shade800;
 
     // FIX #17: animación parte del balance anterior, no desde 0
@@ -1778,7 +1778,7 @@ class _MyHomePageState extends State<MyHomePage> {
                 child: _datoConTendencia(
                   'Ingresos',
                   totalIngresos,
-                  Colors.green,
+                  AppColors.ingreso,
                   Icons.arrow_upward,
                 ),
               ),
@@ -1791,7 +1791,7 @@ class _MyHomePageState extends State<MyHomePage> {
                 child: _datoConTendencia(
                   'Gastos',
                   totalGastos,
-                  Colors.red,
+                  AppColors.gasto,
                   Icons.arrow_downward,
                 ),
               ),
@@ -1805,7 +1805,7 @@ class _MyHomePageState extends State<MyHomePage> {
                   child: _datoConTendencia(
                     'Deudas',
                     totalDeudas,
-                    Colors.orange,
+                    AppColors.deuda,
                     Icons.warning_amber_outlined,
                   ),
                 ),
