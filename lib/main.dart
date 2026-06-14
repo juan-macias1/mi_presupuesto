@@ -507,51 +507,6 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
-  // ===========================
-  // GUARDAR MOVIMIENTO
-  // ===========================
-  Future<void> _guardarMovimiento() async {
-    // El campo muestra el monto con separadores de miles (1.200.000),
-    // así que parseamos con el helper que limpia los puntos antes de
-    // convertir. double.tryParse fallaría con los puntos.
-    final valor = MilesInputFormatter.parse(_valorController.text);
-    if (valor == null ||
-        _tipoSeleccionado == null ||
-        _categoriaSeleccionada == null) return;
-
-    await DatabaseHelper.instance.insertarMovimiento({
-      'tipo': _tipoSeleccionado,
-      'categoria': _categoriaSeleccionada,
-      'descripcion': _descController.text,
-      'valor': valor,
-      'fecha': DateTime.now().toIso8601String(),
-      'es_fijo': _esFijo ? 1 : 0,
-      'es_deuda': 0,
-      'acreedor': null,
-    });
-
-    if (!mounted) return;
-
-    await _cargarMovimientos();
-
-    setState(() {
-      _descController.clear();
-      _valorController.clear();
-      _tipoSeleccionado = null;
-      _categoriaSeleccionada = null;
-      _esFijo = false;
-    });
-
-    Navigator.pop(context);
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Movimiento guardado ✅'),
-        duration: Duration(seconds: 2),
-      ),
-    );
-  }
-
   Future<void> _eliminarMovimiento(int id) async {
     final confirmar = await showDialog<bool>(
       context: context,
@@ -586,184 +541,35 @@ class _MyHomePageState extends State<MyHomePage> {
     }
   }
 
+ // ===========================
+  // BOTTOM SHEET MOVIMIENTO (unificado: crear + editar)
   // ===========================
-  // EDITAR MOVIMIENTO
-  // ===========================
-  void _editarMovimiento(Map<String, dynamic> m) {
-    setState(() {
-      _tipoSeleccionado = m['tipo'];
-      _categoriaSeleccionada = m['categoria'];
+  //
+  // Un solo formulario para ambos casos. Si recibe `existente`, entra en
+  // modo edición: pre-carga los datos, cambia el título y el botón, y al
+  // guardar hace UPDATE en lugar de INSERT. Si no, es modo creación.
+  //
+  // La UI (toggle, monto protagonista, selector de categoría, switch fijo,
+  // formato de miles) es idéntica en ambos modos — esa es la razón de
+  // unificar: un solo diseño que mantener.
+  void _mostrarFormularioMovimiento({Map<String, dynamic>? existente}) {
+    final bool esEdicion = existente != null;
+
+    // Pre-cargar estado según el modo.
+    if (esEdicion) {
+      _tipoSeleccionado = existente['tipo'];
+      _categoriaSeleccionada = existente['categoria'];
       _valorController.text =
-          MilesInputFormatter.format((m['valor'] as num).toDouble());
-      _descController.text = m['descripcion'] ?? '';
-      _esFijo = m['es_fijo'] == 1;
-    });
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            return Padding(
-              padding: EdgeInsets.only(
-                left: 16,
-                right: 16,
-                top: 16,
-                bottom: MediaQuery.of(context).viewInsets.bottom + 16,
-              ),
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text(
-                      'Editar movimiento',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-
-                    DropdownButtonFormField<String>(
-                      initialValue: _tipoSeleccionado,
-                      hint: const Text('Selecciona tipo'),
-                      items: const [
-                        DropdownMenuItem(value: 'gasto', child: Text('Gasto')),
-                        DropdownMenuItem(
-                          value: 'ingreso',
-                          child: Text('Ingreso'),
-                        ),
-                      ],
-                      onChanged: (v) {
-                        setModalState(() {
-                          _tipoSeleccionado = v;
-                          if (v != 'gasto') _esFijo = false;
-                        });
-                      },
-                      decoration: const InputDecoration(
-                        labelText: 'Tipo',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-
-                    if (_tipoSeleccionado == 'gasto') ...[
-                      const SizedBox(height: 8),
-                      SwitchListTile(
-                        title: const Text('Es gasto fijo'),
-                        subtitle: const Text(
-                          'Si no es fijo, se considera variable',
-                          style: TextStyle(fontSize: 11),
-                        ),
-                        value: _esFijo,
-                        onChanged: (value) {
-                          setModalState(() => _esFijo = value);
-                        },
-                      ),
-                    ],
-
-                    const SizedBox(height: 12),
-
-                    DropdownButtonFormField<String>(
-                      initialValue: _categoriaSeleccionada,
-                      hint: const Text('Selecciona categoría'),
-                      items: categorias.map((c) {
-                        return DropdownMenuItem<String>(
-                          value: c['nombre'],
-                          child: Text('${c['emoji']} ${c['nombre']}'),
-                        );
-                      }).toList(),
-                      onChanged: (v) =>
-                          setModalState(() => _categoriaSeleccionada = v),
-                      decoration: const InputDecoration(
-                        labelText: 'Categoría',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-
-                    const SizedBox(height: 12),
-
-                    TextField(
-                      controller: _valorController,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        labelText: 'Valor',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-
-                    const SizedBox(height: 12),
-
-                    TextField(
-                      controller: _descController,
-                      decoration: const InputDecoration(
-                        labelText: 'Descripción (opcional)',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-
-                    const SizedBox(height: 20),
-
-                    SizedBox(
-                      width: double.infinity,
-                      height: 48,
-                      child: ElevatedButton.icon(
-                        icon: const Icon(Icons.save),
-                        label: const Text('Guardar cambios'),
-                        onPressed: () async {
-                          // Mismo parsing con separadores de miles que en guardar.
-                          final valor =
-                              MilesInputFormatter.parse(_valorController.text);
-                          if (valor == null ||
-                              _tipoSeleccionado == null ||
-                              _categoriaSeleccionada == null) return;
-
-                          await DatabaseHelper.instance.actualizarMovimiento({
-                            'id': m['id'],
-                            'tipo': _tipoSeleccionado,
-                            'categoria': _categoriaSeleccionada,
-                            'descripcion': _descController.text,
-                            'valor': valor,
-                            'es_fijo': _esFijo ? 1 : 0,
-                            'es_deuda': 0,
-                            'acreedor': null,
-                          });
-
-                          if (!mounted) return;
-                          Navigator.pop(context);
-                          await _cargarMovimientos();
-
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Movimiento actualizado ✅'),
-                              duration: Duration(seconds: 2),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
-  // ===========================
-  // BOTTOM SHEET NUEVO MOVIMIENTO  (rediseñado)
-  // ===========================
-  void _mostrarFormulario() {
-    _descController.clear();
-    _valorController.clear();
-    _tipoSeleccionado = null;
-    _categoriaSeleccionada = null;
-    _esFijo = false;
+          MilesInputFormatter.format((existente['valor'] as num).toDouble());
+      _descController.text = existente['descripcion'] ?? '';
+      _esFijo = existente['es_fijo'] == 1;
+    } else {
+      _descController.clear();
+      _valorController.clear();
+      _tipoSeleccionado = null;
+      _categoriaSeleccionada = null;
+      _esFijo = false;
+    }
 
     showModalBottomSheet(
       context: context,
@@ -811,9 +617,10 @@ class _MyHomePageState extends State<MyHomePage> {
                       ),
                     ),
 
-                    const Text(
-                      'Nuevo movimiento',
-                      style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
+                    Text(
+                      esEdicion ? 'Editar movimiento' : 'Nuevo movimiento',
+                      style: const TextStyle(
+                          fontSize: 17, fontWeight: FontWeight.w600),
                     ),
                     const SizedBox(height: 16),
 
@@ -876,7 +683,7 @@ class _MyHomePageState extends State<MyHomePage> {
                               IntrinsicWidth(
                                 child: TextField(
                                   controller: _valorController,
-                                  autofocus: true,
+                                  autofocus: !esEdicion,
                                   keyboardType: TextInputType.number,
                                   textAlign: TextAlign.center,
                                   inputFormatters: [MilesInputFormatter()],
@@ -1042,11 +849,15 @@ class _MyHomePageState extends State<MyHomePage> {
                             borderRadius: BorderRadius.circular(14),
                           ),
                         ),
-                        onPressed: puedeGuardar ? _guardarMovimiento : null,
+                        onPressed: puedeGuardar
+                            ? () => _persistirMovimiento(existente: existente)
+                            : null,
                         child: Text(
-                          _tipoSeleccionado == 'ingreso'
-                              ? 'Guardar ingreso'
-                              : 'Guardar gasto',
+                          esEdicion
+                              ? 'Guardar cambios'
+                              : (_tipoSeleccionado == 'ingreso'
+                                  ? 'Guardar ingreso'
+                                  : 'Guardar gasto'),
                           style: const TextStyle(
                             fontSize: 15,
                             fontWeight: FontWeight.w500,
@@ -1061,6 +872,53 @@ class _MyHomePageState extends State<MyHomePage> {
           },
         );
       },
+    );
+  }
+
+  // Persiste el movimiento: INSERT si es nuevo, UPDATE si trae `existente`.
+  Future<void> _persistirMovimiento({Map<String, dynamic>? existente}) async {
+    final valor = MilesInputFormatter.parse(_valorController.text);
+    if (valor == null ||
+        _tipoSeleccionado == null ||
+        _categoriaSeleccionada == null) return;
+
+    final datos = {
+      'tipo': _tipoSeleccionado,
+      'categoria': _categoriaSeleccionada,
+      'descripcion': _descController.text,
+      'valor': valor,
+      'es_fijo': _esFijo ? 1 : 0,
+      'es_deuda': 0,
+      'acreedor': null,
+    };
+
+    if (existente != null) {
+      // UPDATE: preservamos id y la fecha original.
+      await DatabaseHelper.instance.actualizarMovimiento({
+        'id': existente['id'],
+        ...datos,
+      });
+    } else {
+      // INSERT: fecha = ahora.
+      await DatabaseHelper.instance.insertarMovimiento({
+        ...datos,
+        'fecha': DateTime.now().toIso8601String(),
+      });
+    }
+
+    if (!mounted) return;
+    Navigator.pop(context);
+    await _cargarMovimientos();
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          existente != null
+              ? 'Movimiento actualizado ✅'
+              : 'Movimiento guardado ✅',
+        ),
+        duration: const Duration(seconds: 2),
+      ),
     );
   }
 
@@ -1558,7 +1416,7 @@ class _MyHomePageState extends State<MyHomePage> {
       ),
       confirmDismiss: (direction) async {
         if (direction == DismissDirection.startToEnd) {
-          _editarMovimiento(m);
+          _mostrarFormularioMovimiento(existente: m);
           return false;
         }
         if (direction == DismissDirection.endToStart) {
@@ -2097,7 +1955,7 @@ class _MyHomePageState extends State<MyHomePage> {
       ),
 
       floatingActionButton: FloatingActionButton(
-        onPressed: _mostrarFormulario,
+        onPressed: () => _mostrarFormularioMovimiento(),
         child: const Icon(Icons.add, color: Colors.black),
       ),
     );
