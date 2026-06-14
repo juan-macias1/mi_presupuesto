@@ -42,6 +42,12 @@ class AppColors {
   /// Acento secundario / modo noche.
   static const Color acento = Color(0xFF534AB7);
 
+  /// Fondo de emergencia — ahorro de seguridad. Azul = estabilidad, resguardo.
+  static const Color fondo = Color(0xFF3B82C4);
+
+  /// Inversión / crecimiento patrimonial. Teal = crecimiento sostenido.
+  static const Color inversion = Color(0xFF2A9D8F);
+
   // ── Estados de balance ──────────────────────────────────────
   /// Balance positivo (verde profundo legible).
   static const Color balancePositivo = Color(0xFF1B5E20);

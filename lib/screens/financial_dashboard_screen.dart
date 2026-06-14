@@ -18,6 +18,7 @@ import '../widgets/dashboard_charts_card.dart';
 import '../screens/chat_ia_screen.dart';
 import '../screens/deudas_screen.dart';
 import '../services/notification_service.dart';
+import '../theme/app_colors.dart';
 
 class FinancialDashboardScreen extends StatefulWidget {
   const FinancialDashboardScreen({super.key});
@@ -125,7 +126,7 @@ class _FinancialDashboardScreenState
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.error_outline, size: 48, color: Colors.red),
+            const Icon(Icons.error_outline, size: 48, color: AppColors.gasto),
             const SizedBox(height: 12),
             Text(_error!, style: const TextStyle(fontSize: 16)),
             const SizedBox(height: 16),
@@ -175,13 +176,13 @@ class _FinancialDashboardScreenState
     Color color;
     switch (modo) {
       case ModoFinanciero.supervivencia:
-        color = Colors.red;
+        color = AppColors.gasto;
         break;
       case ModoFinanciero.ataque:
-        color = Colors.orange;
+        color = AppColors.deuda;
         break;
       case ModoFinanciero.libertad:
-        color = Colors.green;
+        color = AppColors.ingreso;
         break;
       default:
         color = Colors.grey;
@@ -230,17 +231,17 @@ class _FinancialDashboardScreenState
                 _buildBannerDato(
                   'Deuda total',
                   _fmt.format(flujo.totalDeudaReal),
-                  Colors.red,
+                  AppColors.gasto,
                 ),
                 _buildBannerDato(
                   'Disponible para atacar',
                   _fmt.format(flujo.disponibleParaDeuda),
-                  Colors.orange,
+                  AppColors.deuda,
                 ),
                 _buildBannerDato(
                   'Libre en',
                   '${result.planPago.mesesParaLiberarse} meses',
-                  Colors.green,
+                  AppColors.ingreso,
                 ),
               ],
             ),
@@ -251,7 +252,7 @@ class _FinancialDashboardScreenState
                 icon: const Icon(Icons.credit_card_outlined, size: 16),
                 label: const Text('Ver plan de deudas'),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.orange,
+                  backgroundColor: AppColors.deuda,
                   foregroundColor: Colors.white,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(10),
@@ -275,19 +276,19 @@ class _FinancialDashboardScreenState
             Container(
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: Colors.red.withValues(alpha: 0.1),
+                color: AppColors.gasto.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Row(
                 children: [
                   const Icon(Icons.warning_rounded,
-                      color: Colors.red, size: 16),
+                      color: AppColors.gasto, size: 16),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       'Tus gastos fijos + cuotas de deuda superan tus ingresos. '
                       'Reducir un gasto fijo es urgente.',
-                      style: const TextStyle(fontSize: 12, color: Colors.red),
+                      style: const TextStyle(fontSize: 12, color: AppColors.gasto),
                     ),
                   ),
                 ],
@@ -304,17 +305,17 @@ class _FinancialDashboardScreenState
                 _buildBannerDato(
                   'Disponible',
                   _fmt.format(flujo.disponibleNeto),
-                  Colors.green,
+                  AppColors.ingreso,
                 ),
                 _buildBannerDato(
                   'Fondo ideal',
                   _fmt.format(flujo.fondoEmergenciaIdeal),
-                  Colors.blue,
+                  AppColors.fondo,
                 ),
                 _buildBannerDato(
                   'Para invertir',
                   _fmt.format(flujo.disponibleParaAhorro),
-                  Colors.teal,
+                  AppColors.inversion,
                 ),
               ],
             ),
@@ -361,7 +362,6 @@ class _FinancialDashboardScreenState
   // ── MODO SUPERVIVENCIA — solo lo urgente ──────────────────
   List<Widget> _contenidoSupervivencia(MasterFinancialResult result) {
     return [
-      // Riesgos — lo más urgente
       DashboardSectionCard(
         titulo: 'Riesgos críticos',
         icono: Icons.warning_amber_rounded,
@@ -369,8 +369,6 @@ class _FinancialDashboardScreenState
         children: result.riesgos.map(_buildRiesgo).toList(),
       ),
       const SizedBox(height: 12),
-
-      // Recomendaciones de emergencia
       DashboardSectionCard(
         titulo: 'Qué hacer ahora',
         icono: Icons.bolt_outlined,
@@ -378,8 +376,6 @@ class _FinancialDashboardScreenState
         children: result.recomendaciones.map(_buildRecomendacion).toList(),
       ),
       const SizedBox(height: 12),
-
-      // Flujo del mes
       DashboardSectionCard(
         titulo: 'Tu flujo este mes',
         icono: Icons.account_balance_wallet_outlined,
@@ -391,7 +387,6 @@ class _FinancialDashboardScreenState
   // ── MODO ATAQUE — enfoque en deuda ────────────────────────
   List<Widget> _contenidoAtaque(MasterFinancialResult result) {
     return [
-      // Plan de distribución — lo más accionable
       DashboardSectionCard(
         titulo: 'Plan del mes',
         icono: Icons.account_balance_wallet_outlined,
@@ -399,8 +394,6 @@ class _FinancialDashboardScreenState
         children: [_buildDistribucion(result.distribucion)],
       ),
       const SizedBox(height: 12),
-
-      // Insights relevantes
       if (result.insights.isNotEmpty) ...[
         DashboardSectionCard(
           titulo: 'Insights',
@@ -409,16 +402,12 @@ class _FinancialDashboardScreenState
         ),
         const SizedBox(height: 12),
       ],
-
-      // Recomendaciones
       DashboardSectionCard(
         titulo: 'Recomendaciones',
         icono: Icons.recommend_outlined,
         children: result.recomendaciones.map(_buildRecomendacion).toList(),
       ),
       const SizedBox(height: 12),
-
-      // Fugas de dinero — enemy of debt payoff
       if (result.fugas.isNotEmpty) ...[
         DashboardSectionCard(
           titulo: 'Fugas de dinero',
@@ -427,8 +416,6 @@ class _FinancialDashboardScreenState
         ),
         const SizedBox(height: 12),
       ],
-
-      // Estrategias
       if (result.estrategias.isNotEmpty) ...[
         DashboardSectionCard(
           titulo: 'Estrategias',
@@ -437,8 +424,6 @@ class _FinancialDashboardScreenState
         ),
         const SizedBox(height: 12),
       ],
-
-      // Gráficas — colapsadas por defecto en modo ataque
       DashboardSectionCard(
         titulo: 'Gráficas financieras',
         icono: Icons.bar_chart,
@@ -448,8 +433,6 @@ class _FinancialDashboardScreenState
         ],
       ),
       const SizedBox(height: 12),
-
-      // Proyección
       DashboardSectionCard(
         titulo: 'Proyección a 12 meses',
         icono: Icons.show_chart,
@@ -457,8 +440,6 @@ class _FinancialDashboardScreenState
         children: [_buildProyeccion(result.proyeccion)],
       ),
       const SizedBox(height: 12),
-
-      // Comportamiento — colapsado
       if (result.comportamiento.isNotEmpty) ...[
         DashboardSectionCard(
           titulo: 'Tu comportamiento financiero',
@@ -468,8 +449,6 @@ class _FinancialDashboardScreenState
         ),
         const SizedBox(height: 12),
       ],
-
-      // Riesgos — colapsados
       DashboardSectionCard(
         titulo: 'Riesgos',
         icono: Icons.warning_amber_rounded,
@@ -482,7 +461,6 @@ class _FinancialDashboardScreenState
   // ── MODO LIBERTAD — enfoque en patrimonio ─────────────────
   List<Widget> _contenidoLibertad(MasterFinancialResult result) {
     return [
-      // Proyección — ahora sí importa el ahorro
       DashboardSectionCard(
         titulo: 'Tu proyección de crecimiento',
         icono: Icons.show_chart,
@@ -490,8 +468,6 @@ class _FinancialDashboardScreenState
         children: [_buildProyeccion(result.proyeccion)],
       ),
       const SizedBox(height: 12),
-
-      // Plan de distribución — ahora para metas e inversión
       DashboardSectionCard(
         titulo: 'Plan del mes',
         icono: Icons.account_balance_wallet_outlined,
@@ -499,8 +475,6 @@ class _FinancialDashboardScreenState
         children: [_buildDistribucion(result.distribucion)],
       ),
       const SizedBox(height: 12),
-
-      // Estrategias — ahora de inversión
       if (result.estrategias.isNotEmpty) ...[
         DashboardSectionCard(
           titulo: 'Estrategias de crecimiento',
@@ -509,8 +483,6 @@ class _FinancialDashboardScreenState
         ),
         const SizedBox(height: 12),
       ],
-
-      // Insights
       if (result.insights.isNotEmpty) ...[
         DashboardSectionCard(
           titulo: 'Insights',
@@ -519,8 +491,6 @@ class _FinancialDashboardScreenState
         ),
         const SizedBox(height: 12),
       ],
-
-      // Gráficas
       DashboardSectionCard(
         titulo: 'Gráficas financieras',
         icono: Icons.bar_chart,
@@ -529,8 +499,6 @@ class _FinancialDashboardScreenState
         ],
       ),
       const SizedBox(height: 12),
-
-      // Comportamiento
       if (result.comportamiento.isNotEmpty) ...[
         DashboardSectionCard(
           titulo: 'Tu comportamiento financiero',
@@ -540,8 +508,6 @@ class _FinancialDashboardScreenState
         ),
         const SizedBox(height: 12),
       ],
-
-      // Fugas
       if (result.fugas.isNotEmpty) ...[
         DashboardSectionCard(
           titulo: 'Fugas de dinero',
@@ -593,18 +559,18 @@ class _FinancialDashboardScreenState
     final flujo = result.flujoMensual;
     return Column(
       children: [
-        _buildFilaFlujo('Ingresos', _fmt.format(flujo.ingresos), Colors.green),
+        _buildFilaFlujo('Ingresos', _fmt.format(flujo.ingresos), AppColors.ingreso),
         _buildFilaFlujo(
-            'Gastos fijos', _fmt.format(flujo.gastosFijos), Colors.red),
+            'Gastos fijos', _fmt.format(flujo.gastosFijos), AppColors.gasto),
         _buildFilaFlujo(
-            'Gastos variables', _fmt.format(flujo.gastosVariables), Colors.orange),
+            'Gastos variables', _fmt.format(flujo.gastosVariables), AppColors.deuda),
         _buildFilaFlujo(
-            'Cuotas deuda', _fmt.format(flujo.cuotasDeuda), Colors.red),
+            'Cuotas deuda', _fmt.format(flujo.cuotasDeuda), AppColors.gasto),
         const Divider(height: 16),
         _buildFilaFlujo(
           'Disponible neto',
           _fmt.format(flujo.disponibleNeto),
-          flujo.disponibleNeto >= 0 ? Colors.green : Colors.red,
+          flujo.disponibleNeto >= 0 ? AppColors.ingreso : AppColors.gasto,
           destacado: true,
         ),
       ],
@@ -671,7 +637,7 @@ class _FinancialDashboardScreenState
 
   Widget _buildInsight(FinancialInsight insight) {
     final esAlerta = insight.nivel == 'alerta';
-    final color = esAlerta ? Colors.orange : Colors.green;
+    final color = esAlerta ? AppColors.deuda : AppColors.ingreso;
     final icono =
         esAlerta ? Icons.warning_amber : Icons.check_circle_outline;
 
@@ -730,7 +696,7 @@ class _FinancialDashboardScreenState
       padding: const EdgeInsets.only(bottom: 10),
       child: Row(
         children: [
-          const Icon(Icons.leak_add, color: Colors.redAccent, size: 20),
+          const Icon(Icons.leak_add, color: AppColors.gasto, size: 20),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -746,7 +712,7 @@ class _FinancialDashboardScreenState
           Text(
             '${(fuga.porcentaje * 100).toStringAsFixed(1)}%',
             style: const TextStyle(
-                color: Colors.redAccent, fontWeight: FontWeight.bold),
+                color: AppColors.gasto, fontWeight: FontWeight.bold),
           ),
         ],
       ),
@@ -759,7 +725,7 @@ class _FinancialDashboardScreenState
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.insights, color: Colors.blueAccent, size: 20),
+          const Icon(Icons.insights, color: AppColors.fondo, size: 20),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -782,7 +748,7 @@ class _FinancialDashboardScreenState
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.flag, color: Colors.teal, size: 20),
+          const Icon(Icons.flag, color: AppColors.inversion, size: 20),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -853,15 +819,15 @@ class _FinancialDashboardScreenState
 
     switch (d.fase) {
       case 'CRITICA':
-        colorFase = Colors.red;
+        colorFase = AppColors.gasto;
         iconoFase = Icons.warning_rounded;
         break;
       case 'MODERADA':
-        colorFase = Colors.orange;
+        colorFase = AppColors.deuda;
         iconoFase = Icons.balance;
         break;
       case 'ESTABLE':
-        colorFase = Colors.green;
+        colorFase = AppColors.ingreso;
         iconoFase = Icons.trending_up;
         break;
       default:
@@ -926,19 +892,19 @@ class _FinancialDashboardScreenState
             '📉 Deuda',
             '${(d.porcentajeDeuda * 100).toStringAsFixed(0)}%',
             _fmt.format(d.montoDeuda),
-            Colors.red,
+            AppColors.gasto,
           ),
         _buildItemDistribucion(
           '🛡️ Fondo emergencia',
           '${(d.porcentajeFondo * 100).toStringAsFixed(0)}%',
           _fmt.format(d.montoFondo),
-          Colors.blue,
+          AppColors.fondo,
         ),
         _buildItemDistribucion(
           '🎯 Metas / inversión',
           '${(d.porcentajeMetas * 100).toStringAsFixed(0)}%',
           _fmt.format(d.montoMetas),
-          Colors.green,
+          AppColors.ingreso,
         ),
 
         if (d.mesesParaSalirDeDeuda > 0) ...[
