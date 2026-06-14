@@ -493,6 +493,9 @@ class _DeudasScreenState extends State<DeudasScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        backgroundColor: AppColors.surface,
+        foregroundColor: Colors.black,
+        elevation: 0,
         title: const Text('Mis Deudas'),
         actions: [
           if (_deudas.isNotEmpty)
@@ -548,90 +551,69 @@ class _DeudasScreenState extends State<DeudasScreen> {
   }
 
   // ── Resumen general ───────────────────────────────────────
+  // ── Resumen general ───────────────────────────────────────
   Widget _buildResumenGeneral() {
     final totalDeuda = _deudas.fold(0.0, (s, d) => s + d.saldoActual);
     final totalInicial = _deudas.fold(0.0, (s, d) => s + d.saldoInicial);
+    final yaPagado = totalInicial - totalDeuda;
     final progreso = totalInicial > 0
-        ? ((totalInicial - totalDeuda) / totalInicial).clamp(0.0, 1.0).toDouble()
+        ? (yaPagado / totalInicial).clamp(0.0, 1.0).toDouble()
         : 0.0;
 
     return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: Colors.grey.withValues(alpha: 0.12)),
+      ),
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Deuda total',
-                      style: TextStyle(fontSize: 12, color: Colors.grey),
-                    ),
-                    Text(
-                      _fmt.format(totalDeuda),
-                      style: const TextStyle(
-                        fontSize: 28,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.gasto,
-                      ),
-                    ),
-                  ],
-                ),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    const Text(
-                      'Ya pagaste',
-                      style: TextStyle(fontSize: 12, color: Colors.grey),
-                    ),
-                    Text(
-                      _fmt.format(totalInicial - totalDeuda),
-                      style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.ingreso,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
+            // El número que manda: lo que falta pagar.
+            Text(
+              'Te falta pagar',
+              style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
             ),
-            const SizedBox(height: 16),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  'Progreso total',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: Colors.grey.shade500,
-                  ),
-                ),
-                Text(
-                  '${(progreso * 100).toStringAsFixed(1)}%',
-                  style: const TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.ingreso,
-                  ),
-                ),
-              ],
+            const SizedBox(height: 2),
+            Text(
+              _fmt.format(totalDeuda),
+              style: const TextStyle(
+                fontSize: 30,
+                fontWeight: FontWeight.bold,
+                color: AppColors.gasto,
+                letterSpacing: -0.5,
+              ),
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 14),
+
+            // Progreso como hilo fino — comunica sin saturar.
             ClipRRect(
-              borderRadius: BorderRadius.circular(6),
+              borderRadius: BorderRadius.circular(2),
               child: LinearProgressIndicator(
                 value: progreso,
-                minHeight: 10,
-                backgroundColor: AppColors.gasto.withValues(alpha: 0.15),
+                minHeight: 1,
+                backgroundColor: Colors.grey.withValues(alpha: 0.15),
                 valueColor:
-                    const AlwaysStoppedAnimation<Color>(AppColors.ingreso),
+                    const AlwaysStoppedAnimation<Color>(AppColors.primary),
               ),
+            ),
+            const SizedBox(height: 8),
+
+            // Contexto secundario: todo en gris, sin competir.
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  '${(progreso * 100).toStringAsFixed(0)}% pagado',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                ),
+                Text(
+                  'Ya pagaste ${_fmt.format(yaPagado)}',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                ),
+              ],
             ),
           ],
         ),
@@ -640,15 +622,21 @@ class _DeudasScreenState extends State<DeudasScreen> {
   }
 
   // ── Plan de liberación ────────────────────────────────────
+  // ── Plan de liberación ────────────────────────────────────
   Widget _buildPlanLiberacion(PlanPago plan) {
     if (plan.esInsuficiente) {
       return Card(
-        color: AppColors.gasto.withValues(alpha: 0.08),
+        elevation: 0,
+        color: AppColors.gasto.withValues(alpha: 0.06),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Row(
             children: [
-              const Icon(Icons.warning_rounded, color: AppColors.gasto),
+              const Icon(Icons.warning_rounded,
+                  color: AppColors.gasto, size: 20),
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
@@ -662,101 +650,112 @@ class _DeudasScreenState extends State<DeudasScreen> {
       );
     }
 
-    Color colorEstrategia;
-    IconData iconoEstrategia;
-
-    switch (plan.estrategia) {
-      case 'SPRINT':
-        colorEstrategia = AppColors.ingreso;
-        iconoEstrategia = Icons.rocket_launch_outlined;
-        break;
-      case 'AGRESIVA':
-        colorEstrategia = AppColors.primaryMedium;
-        iconoEstrategia = Icons.local_fire_department_outlined;
-        break;
-      case 'PROGRESIVA':
-        colorEstrategia = AppColors.deuda;
-        iconoEstrategia = Icons.trending_up;
-        break;
-      default:
-        colorEstrategia = Colors.blueGrey;
-        iconoEstrategia = Icons.flag_outlined;
-    }
+    final iconoEstrategia = switch (plan.estrategia) {
+      'SPRINT' => Icons.rocket_launch_outlined,
+      'AGRESIVA' => Icons.local_fire_department_outlined,
+      'PROGRESIVA' => Icons.trending_up,
+      _ => Icons.flag_outlined,
+    };
 
     return Card(
-      elevation: 1,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: Colors.grey.withValues(alpha: 0.12)),
+      ),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Título neutro: ícono gris, texto negro. Sin color de bloque.
             Row(
               children: [
-                Icon(iconoEstrategia, color: colorEstrategia, size: 20),
+                Icon(iconoEstrategia, color: Colors.grey.shade700, size: 18),
                 const SizedBox(width: 8),
-                Text(
+                const Text(
                   'Plan de liberación',
                   style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.bold,
-                    color: colorEstrategia,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
             Text(
               plan.mensajeEstrategia,
-              style: const TextStyle(fontSize: 13),
+              style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
             ),
             const SizedBox(height: 16),
+
+            // Los tres datos: todos en gris oscuro, neutros. Jerarquía
+            // por tamaño, no por color.
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 _buildPlanDato(
-                  '📅 Libre en',
+                  'Libre en',
                   '${plan.mesesParaLiberarse} meses',
-                  colorEstrategia,
                 ),
                 _buildPlanDato(
-                  '🗓️ Fecha',
+                  'Fecha',
                   plan.fechaLiberacion != null
                       ? DateFormat('MMM y', 'es_CO')
-                            .format(plan.fechaLiberacion!)
+                          .format(plan.fechaLiberacion!)
                       : '—',
-                  Colors.blueGrey,
                 ),
                 _buildPlanDato(
-                  '💰 Cuotas',
+                  'Cuota',
                   _fmt.format(
                     _deudas.fold(0.0, (s, d) => s + d.cuotaMensual),
                   ),
-                  AppColors.gasto,
                 ),
               ],
             ),
 
-            // Deuda prioritaria
+            // Ataca primero — el único acento naranja, sutil.
             if (plan.detallePorDeuda.isNotEmpty) ...[
-              const Divider(height: 24),
-              Row(
-                children: [
-                  const Icon(
-                    Icons.priority_high,
-                    color: AppColors.deuda,
-                    size: 16,
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    'Ataca primero: ${plan.detallePorDeuda.first.acreedor}',
-                    style: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.deuda,
+              const SizedBox(height: 14),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: AppColors.deuda.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.arrow_forward,
+                        color: AppColors.deuda, size: 15),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text.rich(
+                        TextSpan(
+                          children: [
+                            const TextSpan(
+                              text: 'Ataca primero: ',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.black87,
+                              ),
+                            ),
+                            TextSpan(
+                              text: plan.detallePorDeuda.first.acreedor,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF1A1A1A),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ],
           ],
@@ -765,20 +764,20 @@ class _DeudasScreenState extends State<DeudasScreen> {
     );
   }
 
-  Widget _buildPlanDato(String label, String valor, Color color) {
+  Widget _buildPlanDato(String label, String valor) {
     return Column(
       children: [
         Text(
           label,
-          style: const TextStyle(fontSize: 11, color: Colors.grey),
+          style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
         ),
         const SizedBox(height: 4),
         Text(
           valor,
-          style: TextStyle(
+          style: const TextStyle(
             fontSize: 14,
-            fontWeight: FontWeight.bold,
-            color: color,
+            fontWeight: FontWeight.w600,
+            color: Color(0xFF333333),
           ),
         ),
       ],
@@ -797,247 +796,235 @@ class _DeudasScreenState extends State<DeudasScreen> {
 
       return Card(
         margin: const EdgeInsets.only(bottom: 12),
-        elevation: esPrioridad ? 3 : 1,
+        elevation: 0,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(14),
-          side: esPrioridad
-              ? const BorderSide(color: AppColors.deuda, width: 2)
-              : BorderSide(color: Colors.grey.withValues(alpha: 0.15)),
+          side: BorderSide(color: Colors.grey.withValues(alpha: 0.12)),
         ),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  if (esPrioridad)
-                    Container(
-                      margin: const EdgeInsets.only(right: 8),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: AppColors.deuda,
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: const Text(
-                        'PRIORITARIA',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 9,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  if (deuda.tasaInteres > 0)
-                    Container(
-                      margin: const EdgeInsets.only(right: 8),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: AppColors.gasto.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
+        child: Container(
+          // El acento de prioridad: un borde lateral naranja, sutil.
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            border: esPrioridad
+                ? const Border(
+                    left: BorderSide(color: AppColors.deuda, width: 3),
+                  )
+                : null,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Fila 1: nombre del acreedor (protagonista) + menú.
+                Row(
+                  children: [
+                    Expanded(
                       child: Text(
-                        '${deuda.tasaInteres}% interés',
+                        deuda.acreedor,
                         style: const TextStyle(
-                          color: AppColors.gasto,
-                          fontSize: 9,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  Expanded(
-                    child: Text(
-                      deuda.acreedor,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                  PopupMenuButton(
-                    itemBuilder: (context) => [
-                      const PopupMenuItem(
-                        value: 'pagar',
-                        child: Row(
-                          children: [
-                            Icon(Icons.check_circle_outline,
-                                color: AppColors.ingreso, size: 18),
-                            SizedBox(width: 8),
-                            Text('Registrar pago'),
-                          ],
-                        ),
-                      ),
-                      const PopupMenuItem(
-                        value: 'editar',
-                        child: Row(
-                          children: [
-                            Icon(Icons.edit_outlined, size: 18),
-                            SizedBox(width: 8),
-                            Text('Editar'),
-                          ],
-                        ),
-                      ),
-                      const PopupMenuItem(
-                        value: 'eliminar',
-                        child: Row(
-                          children: [
-                            Icon(Icons.delete_outline,
-                                color: AppColors.gasto, size: 18),
-                            SizedBox(width: 8),
-                            Text(
-                              'Eliminar',
-                              style: TextStyle(color: AppColors.gasto),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                    onSelected: (value) async {
-                      if (value == 'pagar') {
-                        _mostrarRegistrarPago(deuda);
-                      } else if (value == 'editar') {
-                        _mostrarFormularioDeuda(deudaExistente: deuda);
-                      } else if (value == 'eliminar') {
-                        final confirmar = await showDialog<bool>(
-                          context: context,
-                          builder: (ctx) => AlertDialog(
-                            title: const Text('Eliminar deuda'),
-                            content: Text(
-                              '¿Eliminar la deuda con ${deuda.acreedor}?',
-                            ),
-                            actions: [
-                              TextButton(
-                                onPressed: () =>
-                                    Navigator.pop(ctx, false),
-                                child: const Text('Cancelar'),
-                              ),
-                              TextButton(
-                                onPressed: () =>
-                                    Navigator.pop(ctx, true),
-                                child: const Text(
-                                  'Eliminar',
-                                  style: TextStyle(color: AppColors.gasto),
-                                ),
-                              ),
-                            ],
-                          ),
-                        );
-                        if (confirmar == true) {
-                          await _db.eliminarDeuda(deuda.id!);
-                          await _cargarDatos();
-                        }
-                      }
-                    },
-                  ),
-                ],
-              ),
-
-              if (deuda.descripcion.isNotEmpty) ...[
-                const SizedBox(height: 4),
-                Text(
-                  deuda.descripcion,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey.shade600,
-                  ),
-                ),
-              ],
-
-              const SizedBox(height: 12),
-
-              // Progreso de la deuda
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    _fmt.format(deuda.saldoActual),
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.gasto,
-                    ),
-                  ),
-                  Text(
-                    'de ${_fmt.format(deuda.saldoInicial)}',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.grey.shade500,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: LinearProgressIndicator(
-                  value: deuda.porcentajePagado,
-                  minHeight: 8,
-                  backgroundColor: AppColors.gasto.withValues(alpha: 0.15),
-                  valueColor: const AlwaysStoppedAnimation<Color>(
-                    AppColors.ingreso,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 4),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    '${(deuda.porcentajePagado * 100).toStringAsFixed(1)}% pagado',
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: AppColors.ingreso,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                  Text(
-                    'Cuota: ${_fmt.format(deuda.cuotaMensual)}/mes',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: Colors.grey.shade500,
-                    ),
-                  ),
-                ],
-              ),
-
-              // Proyección del motor
-              if (detalle != null) ...[
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.blueGrey.withValues(alpha: 0.06),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        '📅 Libre en ${detalle.mesesParaPagar} meses',
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                      Text(
-                        DateFormat('MMM y', 'es_CO')
-                            .format(detalle.fechaEstimadaPago),
-                        style: const TextStyle(
-                          fontSize: 12,
+                          fontSize: 16,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
-                    ],
+                    ),
+                    if (esPrioridad)
+                      Container(
+                        margin: const EdgeInsets.only(right: 4),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: AppColors.deuda.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: const Text(
+                          'prioritaria',
+                          style: TextStyle(
+                            color: Color(0xFF5F5E5A),
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    PopupMenuButton(
+                      itemBuilder: (context) => [
+                        const PopupMenuItem(
+                          value: 'pagar',
+                          child: Row(
+                            children: [
+                              Icon(Icons.check_circle_outline,
+                                  color: AppColors.ingreso, size: 18),
+                              SizedBox(width: 8),
+                              Text('Registrar pago'),
+                            ],
+                          ),
+                        ),
+                        const PopupMenuItem(
+                          value: 'editar',
+                          child: Row(
+                            children: [
+                              Icon(Icons.edit_outlined, size: 18),
+                              SizedBox(width: 8),
+                              Text('Editar'),
+                            ],
+                          ),
+                        ),
+                        const PopupMenuItem(
+                          value: 'eliminar',
+                          child: Row(
+                            children: [
+                              Icon(Icons.delete_outline,
+                                  color: AppColors.gasto, size: 18),
+                              SizedBox(width: 8),
+                              Text('Eliminar',
+                                  style: TextStyle(color: AppColors.gasto)),
+                            ],
+                          ),
+                        ),
+                      ],
+                      onSelected: (value) async {
+                        if (value == 'pagar') {
+                          _mostrarRegistrarPago(deuda);
+                        } else if (value == 'editar') {
+                          _mostrarFormularioDeuda(deudaExistente: deuda);
+                        } else if (value == 'eliminar') {
+                          final confirmar = await showDialog<bool>(
+                            context: context,
+                            builder: (ctx) => AlertDialog(
+                              title: const Text('Eliminar deuda'),
+                              content: Text(
+                                '¿Eliminar la deuda con ${deuda.acreedor}?',
+                              ),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.pop(ctx, false),
+                                  child: const Text('Cancelar'),
+                                ),
+                                TextButton(
+                                  onPressed: () => Navigator.pop(ctx, true),
+                                  child: const Text('Eliminar',
+                                      style:
+                                          TextStyle(color: AppColors.gasto)),
+                                ),
+                              ],
+                            ),
+                          );
+                          if (confirmar == true) {
+                            await _db.eliminarDeuda(deuda.id!);
+                            await _cargarDatos();
+                          }
+                        }
+                      },
+                    ),
+                  ],
+                ),
+
+                // Descripción + interés como contexto gris en una línea.
+                if (deuda.descripcion.isNotEmpty || deuda.tasaInteres > 0) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    [
+                      if (deuda.descripcion.isNotEmpty) deuda.descripcion,
+                      if (deuda.tasaInteres > 0)
+                        '${deuda.tasaInteres}% interés',
+                    ].join('  ·  '),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey.shade600,
+                    ),
+                  ),
+                ],
+
+                const SizedBox(height: 12),
+
+                // El saldo: importante (rojo) pero el "de X" es contexto gris.
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.baseline,
+                  textBaseline: TextBaseline.alphabetic,
+                  children: [
+                    Text(
+                      _fmt.format(deuda.saldoActual),
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.gasto,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      'de ${_fmt.format(deuda.saldoInicial)}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey.shade500,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(2),
+                  child: LinearProgressIndicator(
+                    value: deuda.porcentajePagado,
+                    minHeight: 1,
+                    backgroundColor: Colors.grey.withValues(alpha: 0.15),
+                    valueColor: const AlwaysStoppedAnimation<Color>(
+                      AppColors.primary,
+                    ),
                   ),
                 ),
+                const SizedBox(height: 4),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      '${(deuda.porcentajePagado * 100).toStringAsFixed(0)}% pagado',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.grey.shade600,
+                      ),
+                    ),
+                    Text(
+                      'Cuota ${_fmt.format(deuda.cuotaMensual)}/mes',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.grey.shade500,
+                      ),
+                    ),
+                  ],
+                ),
+
+                // Proyección — contexto neutro.
+                if (detalle != null) ...[
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Icon(Icons.event_outlined,
+                          size: 13, color: Colors.grey.shade500),
+                      const SizedBox(width: 6),
+                      Text(
+                        'Libre en ${detalle.mesesParaPagar} meses',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
+                      const Spacer(),
+                      Text(
+                        DateFormat('MMM y', 'es_CO')
+                            .format(detalle.fechaEstimadaPago),
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.grey.shade700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       );

@@ -306,8 +306,10 @@ class _MetasScreenState extends State<MetasScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        backgroundColor: AppColors.surface,
+        foregroundColor: Colors.black,
+        elevation: 0,
         title: const Text('Mis Metas'),
-        elevation: 1,
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _mostrarFormulario(),

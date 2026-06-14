@@ -75,6 +75,9 @@ class _FinancialDashboardScreenState
 
     return Scaffold(
       appBar: AppBar(
+        backgroundColor: AppColors.surface,
+        foregroundColor: Colors.black,
+        elevation: 0,
         title: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
