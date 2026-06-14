@@ -6,6 +6,7 @@ import '../models/meta_inteligente.dart';
 import '../services/master_financial_brain.dart';
 import '../services/meta_inteligente_engine.dart';
 import '../widgets/meta_card.dart';
+import '../theme/app_colors.dart';
 
 /// MetasScreen — listado de metas de ahorro con análisis inteligente.
 ///
@@ -177,7 +178,7 @@ class _MetasScreenState extends State<MetasScreen> {
                             icon: const Icon(Icons.delete_outline),
                             label: const Text('Eliminar'),
                             style: TextButton.styleFrom(
-                              foregroundColor: Colors.red,
+                              foregroundColor: AppColors.gasto,
                             ),
                           ),
                           const Spacer(),
@@ -285,7 +286,7 @@ class _MetasScreenState extends State<MetasScreen> {
               Navigator.of(sheetContext).pop();
               await _cargarDatos();
             },
-            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            style: FilledButton.styleFrom(backgroundColor: AppColors.gasto),
             child: const Text('Eliminar'),
           ),
         ],
@@ -295,7 +296,7 @@ class _MetasScreenState extends State<MetasScreen> {
 
   void _mostrarError(BuildContext ctx, String mensaje) {
     ScaffoldMessenger.of(ctx).showSnackBar(
-      SnackBar(content: Text(mensaje), backgroundColor: Colors.red),
+      SnackBar(content: Text(mensaje), backgroundColor: AppColors.gasto),
     );
   }
 
