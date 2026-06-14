@@ -1,7 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import '../services/chart_engine.dart';
+import '../theme/app_colors.dart';
 
+/// DashboardChartsCard — gráficas del dashboard, rediseñadas.
+///
+/// Cambios clave del rediseño:
+/// - Ingresos vs gastos: línea de tendencia compacta (no barras gigantes
+///   que se desbordaban). Con un solo mes, barras horizontales proporcionales.
+/// - Puntos marcados solo en el máximo y mínimo de cada línea, para comparar.
+/// - Toda la paleta migrada a AppColors (adiós verdes/naranjas crudos).
+/// - Tope de altura fijo: nunca más se desborda de la pantalla.
 class DashboardChartsCard extends StatefulWidget {
   final int financialScore;
 
@@ -43,280 +52,271 @@ class _DashboardChartsCardState extends State<DashboardChartsCard> {
       return const Center(child: CircularProgressIndicator());
     }
 
+    final ingresos = _ingresosGastos?['ingresos'] ?? {};
+    final cantidadMeses = ingresos.length;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // ── Gráfica 1: Ingresos vs Gastos ───────────────────
-        // BUG FIX #1: usar clave 'ingresos' correcta del ChartEngine corregido
-        if (_ingresosGastos != null &&
-            (_ingresosGastos!['ingresos']?.isNotEmpty ?? false)) ...[
-          _buildSubtitulo('📊 Ingresos vs Gastos por mes'),
+        // ── Ingresos vs gastos ──
+        if (cantidadMeses > 0) ...[
+          _buildSubtitulo('Ingresos vs gastos'),
           const SizedBox(height: 12),
-          SizedBox(height: 200, child: _buildBarChart(_ingresosGastos!)),
-          const SizedBox(height: 8),
-          // BUG FIX #2: leyenda actualizada con 3 series
-          _buildLeyenda(),
+          if (cantidadMeses == 1)
+            _buildResumenMesUnico(_ingresosGastos!)
+          else
+            _buildLineaTendencia(_ingresosGastos!),
           const SizedBox(height: 24),
         ],
 
-        // ── Gráfica 2: Gastos por categoría ─────────────────
+        // ── Gastos por categoría ──
         if (_categorias != null && _categorias!.isNotEmpty) ...[
-          _buildSubtitulo('🥧 Gastos por categoría'),
+          _buildSubtitulo('Gastos por categoría'),
           const SizedBox(height: 12),
-          SizedBox(height: 200, child: _buildPieChart(_categorias!)),
-          const SizedBox(height: 12),
-          _buildLeyendaCategorias(_categorias!),
+          _buildCategorias(_categorias!),
           const SizedBox(height: 24),
         ],
 
-        // ── Gráfica 3: Score financiero ──────────────────────
-        _buildSubtitulo('📈 Score financiero actual'),
-        const SizedBox(height: 12),
-        SizedBox(height: 120, child: _buildScoreChart()),
-        const SizedBox(height: 24),
-
-        // ── Gráfica 4: Progreso de metas ─────────────────────
+        // ── Progreso de metas ──
         if (_metas != null && _metas!.isNotEmpty) ...[
-          _buildSubtitulo('🎯 Progreso de metas'),
+          _buildSubtitulo('Progreso de metas'),
           const SizedBox(height: 12),
           ..._metas!.map((m) => _buildMetaBar(m)),
         ],
 
-        // Sin metas — mensaje amigable sin overflow
         if (_metas != null && _metas!.isEmpty)
-          Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.grey.withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(
-                  color: Colors.grey.withValues(alpha: 0.2),
-                ),
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.flag_outlined, color: Colors.grey, size: 16),
-                  SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Aún no tienes metas activas. Crea una desde el menú de metas.',
-                      style: TextStyle(fontSize: 12, color: Colors.grey),
-                    ),
-                  ),
-                ],
-              ),
-            ),
+          _buildAvisoVacio(
+            'Aún no tienes metas activas. Créalas desde el menú de metas.',
           ),
       ],
     );
   }
 
-  // ── Bar Chart: Ingresos vs Gastos Fijos vs Variables ──────
-  // BUG FIX #1: usa las claves correctas 'ingresos', 'gastosFijos', 'gastosVariables'
-  Widget _buildBarChart(Map<String, Map<String, double>> data) {
-    final claves = data['ingresos']?.keys.toList() ?? [];
-
+  // ── Línea de tendencia (varios meses) ─────────────────────
+  Widget _buildLineaTendencia(Map<String, Map<String, double>> data) {
+    final claves = (data['ingresos']?.keys.toList() ?? [])..sort();
     if (claves.isEmpty) return const SizedBox();
 
-    List<BarChartGroupData> grupos = [];
-
-    for (int i = 0; i < claves.length; i++) {
-      final clave = claves[i];
-      final ingreso = data['ingresos']?[clave] ?? 0;
-      final gastoFijo = data['gastosFijos']?[clave] ?? 0;
-      final gastoVariable = data['gastosVariables']?[clave] ?? 0;
-
-      grupos.add(
-        BarChartGroupData(
-          x: i,
-          barRods: [
-            BarChartRodData(
-              toY: ingreso,
-              color: Colors.green,
-              width: 8,
-              borderRadius: BorderRadius.circular(4),
-            ),
-            BarChartRodData(
-              toY: gastoFijo,
-              color: Colors.redAccent,
-              width: 8,
-              borderRadius: BorderRadius.circular(4),
-            ),
-            BarChartRodData(
-              toY: gastoVariable,
-              color: Colors.orange,
-              width: 8,
-              borderRadius: BorderRadius.circular(4),
-            ),
-          ],
-        ),
-      );
+    // Una sola línea de gastos = fijos + variables.
+    final ingresos = <double>[];
+    final gastos = <double>[];
+    for (final k in claves) {
+      ingresos.add(data['ingresos']?[k] ?? 0);
+      gastos.add((data['gastosFijos']?[k] ?? 0) +
+          (data['gastosVariables']?[k] ?? 0));
     }
 
-    return BarChart(
-      BarChartData(
-        barGroups: grupos,
-        gridData: const FlGridData(show: false),
-        borderData: FlBorderData(show: false),
-        titlesData: FlTitlesData(
-          leftTitles: const AxisTitles(
-            sideTitles: SideTitles(showTitles: false),
-          ),
-          rightTitles: const AxisTitles(
-            sideTitles: SideTitles(showTitles: false),
-          ),
-          topTitles: const AxisTitles(
-            sideTitles: SideTitles(showTitles: false),
-          ),
-          bottomTitles: AxisTitles(
-            sideTitles: SideTitles(
-              showTitles: true,
-              getTitlesWidget: (value, meta) {
-                final index = value.toInt();
-                if (index >= claves.length) return const SizedBox();
-                final partes = claves[index].split('-');
-                if (partes.length < 2) return const SizedBox();
-                final mes = _nombreMes(int.parse(partes[1]));
-                return Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Text(mes, style: const TextStyle(fontSize: 10)),
-                );
-              },
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  // ── Pie Chart: Gastos por categoría ──────────────────────
-  Widget _buildPieChart(Map<String, double> data) {
-    final colores = [
-      Colors.blue,
-      Colors.orange,
-      Colors.green,
-      Colors.purple,
-      Colors.red,
-      Colors.teal,
-      Colors.grey,
-    ];
-
-    final lista = data.entries.toList();
-    final total = lista.fold(0.0, (s, e) => s + e.value);
-
-    if (total == 0) return const SizedBox();
-
-    List<PieChartSectionData> secciones = [];
-
-    for (int i = 0; i < lista.length; i++) {
-      final porcentaje = lista[i].value / total * 100;
-      secciones.add(
-        PieChartSectionData(
-          value: lista[i].value,
-          color: colores[i % colores.length],
-          title: '${porcentaje.toStringAsFixed(0)}%',
-          radius: 80,
-          titleStyle: const TextStyle(
-            fontSize: 11,
-            fontWeight: FontWeight.bold,
-            color: Colors.white,
-          ),
-        ),
-      );
-    }
-
-    return PieChart(PieChartData(sections: secciones));
-  }
-
-  // ── Score financiero ──────────────────────────────────────
-  Widget _buildScoreChart() {
-    final score = widget.financialScore.toDouble();
-
-    // score <= 0 cubre dos casos: 0 (sin movimientos) y -1 (datos
-    // insuficientes para calcular). En ambos no mostramos un número.
-    if (score <= 0) {
-      return Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: Colors.grey.withValues(alpha: 0.08),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: Colors.grey.withValues(alpha: 0.2)),
-        ),
-        child: const Row(
-          children: [
-            Icon(Icons.info_outline, color: Colors.grey, size: 16),
-            SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                'Registra tus gastos del mes para calcular tu score.',
-                style: TextStyle(fontSize: 12, color: Colors.grey),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    final color = score >= 70
-        ? Colors.green
-        : score >= 40
-        ? Colors.orange
-        : Colors.red;
+    final maxY = [
+      ...ingresos,
+      ...gastos,
+    ].fold(0.0, (m, v) => v > m ? v : m);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Text(
-              '${widget.financialScore}',
-              style: TextStyle(
-                fontSize: 36,
-                fontWeight: FontWeight.bold,
-                color: color,
+        SizedBox(
+          height: 140,
+          child: LineChart(
+            LineChartData(
+              minY: 0,
+              maxY: maxY * 1.15,
+              gridData: const FlGridData(show: false),
+              borderData: FlBorderData(show: false),
+              titlesData: FlTitlesData(
+                leftTitles: const AxisTitles(
+                  sideTitles: SideTitles(showTitles: false),
+                ),
+                rightTitles: const AxisTitles(
+                  sideTitles: SideTitles(showTitles: false),
+                ),
+                topTitles: const AxisTitles(
+                  sideTitles: SideTitles(showTitles: false),
+                ),
+                bottomTitles: AxisTitles(
+                  sideTitles: SideTitles(
+                    showTitles: true,
+                    interval: 1,
+                    getTitlesWidget: (value, meta) {
+                      final i = value.toInt();
+                      if (i < 0 || i >= claves.length) {
+                        return const SizedBox();
+                      }
+                      final partes = claves[i].split('-');
+                      if (partes.length < 2) return const SizedBox();
+                      return Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: Text(
+                          _nombreMes(int.parse(partes[1])),
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: Colors.grey.shade500,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
               ),
+              lineTouchData: const LineTouchData(enabled: false),
+              lineBarsData: [
+                _lineaSerie(ingresos, AppColors.primary),
+                _lineaSerie(gastos, AppColors.deuda),
+              ],
             ),
-            const Text(
-              ' / 100',
-              style: TextStyle(fontSize: 16, color: Colors.grey),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(8),
-          child: LinearProgressIndicator(
-            value: score / 100,
-            minHeight: 16,
-            backgroundColor: color.withValues(alpha: 0.15),
-            valueColor: AlwaysStoppedAnimation<Color>(color),
           ),
         ),
-        const SizedBox(height: 6),
-        Text(
-          score >= 70
-              ? 'Excelente salud financiera'
-              : score >= 40
-              ? 'Salud financiera en desarrollo'
-              : 'Salud financiera en riesgo',
-          style: TextStyle(fontSize: 12, color: color),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            _leyendaItem(AppColors.primary, 'Ingresos'),
+            const SizedBox(width: 16),
+            _leyendaItem(AppColors.deuda, 'Gastos'),
+          ],
         ),
       ],
     );
   }
 
-  // ── Barras horizontales: Progreso metas ──────────────────
+  /// Construye una serie de línea con puntos visibles SOLO en el máximo
+  /// y el mínimo — para comparar meses de un vistazo sin ensuciar.
+  LineChartBarData _lineaSerie(List<double> valores, Color color) {
+    double maxV = valores.first;
+    double minV = valores.first;
+    int idxMax = 0;
+    int idxMin = 0;
+    for (int i = 1; i < valores.length; i++) {
+      if (valores[i] > maxV) {
+        maxV = valores[i];
+        idxMax = i;
+      }
+      if (valores[i] < minV) {
+        minV = valores[i];
+        idxMin = i;
+      }
+    }
+
+    return LineChartBarData(
+      spots: [
+        for (int i = 0; i < valores.length; i++)
+          FlSpot(i.toDouble(), valores[i]),
+      ],
+      isCurved: true,
+      curveSmoothness: 0.3,
+      color: color,
+      barWidth: 1.5,
+      isStrokeCapRound: true,
+      dotData: FlDotData(
+        show: true,
+        checkToShowDot: (spot, barData) {
+          // Solo el punto más alto y el más bajo.
+          return spot.x.toInt() == idxMax || spot.x.toInt() == idxMin;
+        },
+        getDotPainter: (spot, percent, barData, index) {
+          return FlDotCirclePainter(
+            radius: 3.5,
+            color: color,
+            strokeWidth: 0,
+            strokeColor: color,
+          );
+        },
+      ),
+      belowBarData: BarAreaData(
+        show: true,
+        color: color.withValues(alpha: 0.06),
+      ),
+    );
+  }
+
+  // ── Resumen de mes único (barras proporcionales) ──────────
+  Widget _buildResumenMesUnico(Map<String, Map<String, double>> data) {
+    final clave = data['ingresos']?.keys.first ?? '';
+    final ingreso = data['ingresos']?[clave] ?? 0;
+    final fijos = data['gastosFijos']?[clave] ?? 0;
+    final variables = data['gastosVariables']?[clave] ?? 0;
+    final base = ingreso > 0 ? ingreso : 1;
+
+    return Column(
+      children: [
+        _barraProporcional('Ingresos', ingreso, 1.0, AppColors.primary),
+        const SizedBox(height: 12),
+        _barraProporcional(
+            'Gastos fijos', fijos, fijos / base, Colors.grey.shade500),
+        const SizedBox(height: 12),
+        _barraProporcional(
+            'Gastos variables', variables, variables / base, AppColors.deuda),
+      ],
+    );
+  }
+
+  Widget _barraProporcional(
+      String label, double valor, double fraccion, Color color) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(label,
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+            Text(
+              _fmtCorto(valor),
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: color,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(3),
+          child: LinearProgressIndicator(
+            value: fraccion.clamp(0.0, 1.0),
+            minHeight: 6,
+            backgroundColor: Colors.grey.withValues(alpha: 0.12),
+            valueColor: AlwaysStoppedAnimation<Color>(color),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ── Categorías (barras horizontales, no donut) ────────────
+  Widget _buildCategorias(Map<String, double> data) {
+    final lista = data.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    final total = lista.fold(0.0, (s, e) => s + e.value);
+    if (total == 0) return const SizedBox();
+
+    // Paleta de marca, en orden de prioridad visual.
+    final colores = [
+      AppColors.primary,
+      AppColors.deuda,
+      AppColors.fondo,
+      AppColors.acento,
+      AppColors.inversion,
+      Colors.grey.shade500,
+    ];
+
+    return Column(
+      children: [
+        for (int i = 0; i < lista.length; i++) ...[
+          _barraProporcional(
+            lista[i].key,
+            lista[i].value,
+            lista[i].value / total,
+            colores[i % colores.length],
+          ),
+          if (i < lista.length - 1) const SizedBox(height: 12),
+        ],
+      ],
+    );
+  }
+
+  // ── Barras de metas ───────────────────────────────────────
   Widget _buildMetaBar(Map<String, dynamic> meta) {
     final progreso = (meta['progreso'] as num?)?.toDouble() ?? 0.0;
-    final color = progreso < 0.4
-        ? Colors.red
-        : progreso < 0.8
-        ? Colors.orange
-        : Colors.green;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -337,28 +337,25 @@ class _DashboardChartsCardState extends State<DashboardChartsCard> {
                 ),
               ),
               const SizedBox(width: 8),
-              SizedBox(
-                width: 40,
-                child: Text(
-                  '${(progreso * 100).toStringAsFixed(0)}%',
-                  textAlign: TextAlign.end,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    color: color,
-                  ),
+              Text(
+                '${(progreso * 100).toStringAsFixed(0)}%',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.primary,
                 ),
               ),
             ],
           ),
           const SizedBox(height: 4),
           ClipRRect(
-            borderRadius: BorderRadius.circular(6),
+            borderRadius: BorderRadius.circular(3),
             child: LinearProgressIndicator(
               value: progreso.clamp(0.0, 1.0).toDouble(),
-              minHeight: 10,
-              backgroundColor: color.withValues(alpha: 0.15),
-              valueColor: AlwaysStoppedAnimation<Color>(color),
+              minHeight: 6,
+              backgroundColor: Colors.grey.withValues(alpha: 0.12),
+              valueColor:
+                  const AlwaysStoppedAnimation<Color>(AppColors.primary),
             ),
           ),
         ],
@@ -370,73 +367,49 @@ class _DashboardChartsCardState extends State<DashboardChartsCard> {
   Widget _buildSubtitulo(String texto) {
     return Text(
       texto,
-      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
     );
   }
 
-  // BUG FIX #2: leyenda actualizada con las 3 series correctas
-  Widget _buildLeyenda() {
-    return Wrap(
-      spacing: 16,
-      runSpacing: 6,
-      children: [
-        _buildLeyendaItem(Colors.green, 'Ingresos'),
-        _buildLeyendaItem(Colors.redAccent, 'Gastos fijos'),
-        _buildLeyendaItem(Colors.orange, 'Gastos variables'),
-      ],
+  Widget _buildAvisoVacio(String texto) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.grey.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.grey.withValues(alpha: 0.2)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.flag_outlined, color: Colors.grey.shade500, size: 16),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              texto,
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
-  Widget _buildLeyendaItem(Color color, String label) {
+  Widget _leyendaItem(Color color, String label) {
     return Row(
       children: [
         Container(
-          width: 12,
-          height: 12,
+          width: 10,
+          height: 10,
           decoration: BoxDecoration(
             color: color,
             borderRadius: BorderRadius.circular(3),
           ),
         ),
-        const SizedBox(width: 4),
-        Text(label, style: const TextStyle(fontSize: 11)),
+        const SizedBox(width: 5),
+        Text(label,
+            style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
       ],
-    );
-  }
-
-  Widget _buildLeyendaCategorias(Map<String, double> data) {
-    final colores = [
-      Colors.blue,
-      Colors.orange,
-      Colors.green,
-      Colors.purple,
-      Colors.red,
-      Colors.teal,
-      Colors.grey,
-    ];
-
-    final lista = data.entries.toList();
-
-    return Wrap(
-      spacing: 8,
-      runSpacing: 4,
-      children: List.generate(lista.length, (i) {
-        return Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 10,
-              height: 10,
-              decoration: BoxDecoration(
-                color: colores[i % colores.length],
-                shape: BoxShape.circle,
-              ),
-            ),
-            const SizedBox(width: 4),
-            Text(lista[i].key, style: const TextStyle(fontSize: 11)),
-          ],
-        );
-      }),
     );
   }
 
@@ -446,5 +419,12 @@ class _DashboardChartsCardState extends State<DashboardChartsCard> {
       'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic',
     ];
     return mes >= 1 && mes <= 12 ? meses[mes - 1] : '';
+  }
+
+  /// Formato corto para montos en las barras (1.2M, 800k, etc.).
+  String _fmtCorto(double v) {
+    if (v >= 1000000) return '${(v / 1000000).toStringAsFixed(1)}M';
+    if (v >= 1000) return '${(v / 1000).toStringAsFixed(0)}k';
+    return v.toStringAsFixed(0);
   }
 }
