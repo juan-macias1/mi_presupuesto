@@ -11,7 +11,6 @@ import '../models/financial_risk.dart';
 import '../models/financial_strategy.dart';
 import '../models/financial_behavior.dart';
 import '../models/money_leak.dart';
-import '../widgets/dashboard_score_card.dart';
 import '../widgets/dashboard_section_card.dart';
 import '../widgets/dashboard_risk_chip.dart';
 import '../widgets/dashboard_charts_card.dart';
@@ -153,15 +152,16 @@ class _FinancialDashboardScreenState
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          // Banner de modo — lo más importante arriba
+          // Zona foco — hero + contexto
           _buildBannerModo(result),
+
+          // Score como línea fina, solo cuando es real (>= 0)
+          if (result.scoreFinanciero >= 0) ...[
+            const SizedBox(height: 14),
+            _buildScoreLinea(result.scoreFinanciero),
+          ],
+
           const SizedBox(height: 16),
-
-          // Score
-          DashboardScoreCard(score: result.scoreFinanciero),
-          const SizedBox(height: 12),
-
-          // Contenido según modo
           ..._buildContenidoPorModo(result),
 
           const SizedBox(height: 24),
@@ -407,6 +407,58 @@ class _FinancialDashboardScreenState
     final hoy = DateTime.now();
     final objetivo = DateTime(hoy.year, hoy.month + meses, 1);
     return '${nombres[objetivo.month - 1]} ${objetivo.year}';
+  }
+
+  // ── Score en línea fina ───────────────────────────────────
+  Widget _buildScoreLinea(int score) {
+    Color color;
+    String etiqueta;
+    if (score >= 80) {
+      color = const Color(0xFF2E7D32);
+      etiqueta = 'Excelente';
+    } else if (score >= 60) {
+      color = const Color(0xFF558B2F);
+      etiqueta = 'Bueno';
+    } else if (score >= 40) {
+      color = const Color(0xFFEF6C00);
+      etiqueta = 'Regular';
+    } else {
+      color = const Color(0xFFC62828);
+      etiqueta = 'En riesgo';
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: Row(
+        children: [
+          Text(
+            'Mi score',
+            style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(3),
+              child: LinearProgressIndicator(
+                value: score / 100,
+                minHeight: 6,
+                backgroundColor: color.withValues(alpha: 0.15),
+                valueColor: AlwaysStoppedAnimation<Color>(color),
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            '$score · $etiqueta',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: color,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   // ── Contenido por modo — tres puertas ─────────────────────
