@@ -4,6 +4,7 @@ import '../models/deuda.dart';
 import '../models/plan_pago.dart';
 import '../services/deuda_engine.dart';
 import '../db/database_helper.dart';
+import '../theme/app_colors.dart';
 
 class DeudasScreen extends StatefulWidget {
   const DeudasScreen({super.key});
@@ -184,7 +185,7 @@ class _DeudasScreenState extends State<DeudasScreen> {
                           : 'Agregar deuda',
                     ),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.red.shade600,
+                      backgroundColor: AppColors.gasto,
                       foregroundColor: Colors.white,
                     ),
                     onPressed: () async {
@@ -311,7 +312,7 @@ class _DeudasScreenState extends State<DeudasScreen> {
                   icon: const Icon(Icons.check_circle_outline),
                   label: const Text('Confirmar pago'),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green,
+                    backgroundColor: AppColors.ingreso,
                     foregroundColor: Colors.white,
                   ),
                   onPressed: () async {
@@ -333,7 +334,7 @@ class _DeudasScreenState extends State<DeudasScreen> {
                               : 'Pago registrado ✅ Saldo: ${_fmt.format(nuevaSaldo)}',
                         ),
                         backgroundColor:
-                            nuevaSaldo <= 0 ? Colors.green : null,
+                            nuevaSaldo <= 0 ? AppColors.ingreso : null,
                       ),
                     );
                   },
@@ -421,10 +422,10 @@ class _DeudasScreenState extends State<DeudasScreen> {
                       width: double.infinity,
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        color: Colors.green.withValues(alpha: 0.08),
+                        color: AppColors.ingreso.withValues(alpha: 0.08),
                         borderRadius: BorderRadius.circular(12),
                         border: Border.all(
-                          color: Colors.green.withValues(alpha: 0.3),
+                          color: AppColors.ingreso.withValues(alpha: 0.3),
                         ),
                       ),
                       child: Column(
@@ -445,7 +446,7 @@ class _DeudasScreenState extends State<DeudasScreen> {
                               _buildSimuladorDato(
                                 'Sin extra',
                                 '${resultado!['mesesActual']} meses',
-                                Colors.orange,
+                                AppColors.deuda,
                               ),
                               const Icon(
                                 Icons.arrow_forward,
@@ -454,7 +455,7 @@ class _DeudasScreenState extends State<DeudasScreen> {
                               _buildSimuladorDato(
                                 'Con extra',
                                 '${resultado!['mesesConExtra']} meses',
-                                Colors.green,
+                                AppColors.ingreso,
                               ),
                             ],
                           ),
@@ -540,7 +541,7 @@ class _DeudasScreenState extends State<DeudasScreen> {
       floatingActionButton: FloatingActionButton(
         onPressed: () => _mostrarFormularioDeuda(),
         tooltip: 'Agregar deuda',
-        backgroundColor: Colors.red.shade400,
+        backgroundColor: AppColors.gasto,
         child: const Icon(Icons.add, color: Colors.white),
       ),
     );
@@ -576,7 +577,7 @@ class _DeudasScreenState extends State<DeudasScreen> {
                       style: const TextStyle(
                         fontSize: 28,
                         fontWeight: FontWeight.bold,
-                        color: Colors.red,
+                        color: AppColors.gasto,
                       ),
                     ),
                   ],
@@ -593,7 +594,7 @@ class _DeudasScreenState extends State<DeudasScreen> {
                       style: const TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.bold,
-                        color: Colors.green,
+                        color: AppColors.ingreso,
                       ),
                     ),
                   ],
@@ -616,7 +617,7 @@ class _DeudasScreenState extends State<DeudasScreen> {
                   style: const TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.bold,
-                    color: Colors.green,
+                    color: AppColors.ingreso,
                   ),
                 ),
               ],
@@ -627,8 +628,9 @@ class _DeudasScreenState extends State<DeudasScreen> {
               child: LinearProgressIndicator(
                 value: progreso,
                 minHeight: 10,
-                backgroundColor: Colors.red.withValues(alpha: 0.15),
-                valueColor: const AlwaysStoppedAnimation<Color>(Colors.green),
+                backgroundColor: AppColors.gasto.withValues(alpha: 0.15),
+                valueColor:
+                    const AlwaysStoppedAnimation<Color>(AppColors.ingreso),
               ),
             ),
           ],
@@ -641,12 +643,12 @@ class _DeudasScreenState extends State<DeudasScreen> {
   Widget _buildPlanLiberacion(PlanPago plan) {
     if (plan.esInsuficiente) {
       return Card(
-        color: Colors.red.shade50,
+        color: AppColors.gasto.withValues(alpha: 0.08),
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Row(
             children: [
-              const Icon(Icons.warning_rounded, color: Colors.red),
+              const Icon(Icons.warning_rounded, color: AppColors.gasto),
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
@@ -665,15 +667,15 @@ class _DeudasScreenState extends State<DeudasScreen> {
 
     switch (plan.estrategia) {
       case 'SPRINT':
-        colorEstrategia = Colors.green;
+        colorEstrategia = AppColors.ingreso;
         iconoEstrategia = Icons.rocket_launch_outlined;
         break;
       case 'AGRESIVA':
-        colorEstrategia = Colors.teal;
+        colorEstrategia = AppColors.primaryMedium;
         iconoEstrategia = Icons.local_fire_department_outlined;
         break;
       case 'PROGRESIVA':
-        colorEstrategia = Colors.orange;
+        colorEstrategia = AppColors.deuda;
         iconoEstrategia = Icons.trending_up;
         break;
       default:
@@ -730,7 +732,7 @@ class _DeudasScreenState extends State<DeudasScreen> {
                   _fmt.format(
                     _deudas.fold(0.0, (s, d) => s + d.cuotaMensual),
                   ),
-                  Colors.red,
+                  AppColors.gasto,
                 ),
               ],
             ),
@@ -742,7 +744,7 @@ class _DeudasScreenState extends State<DeudasScreen> {
                 children: [
                   const Icon(
                     Icons.priority_high,
-                    color: Colors.orange,
+                    color: AppColors.deuda,
                     size: 16,
                   ),
                   const SizedBox(width: 6),
@@ -751,7 +753,7 @@ class _DeudasScreenState extends State<DeudasScreen> {
                     style: const TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
-                      color: Colors.orange,
+                      color: AppColors.deuda,
                     ),
                   ),
                 ],
@@ -799,7 +801,7 @@ class _DeudasScreenState extends State<DeudasScreen> {
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(14),
           side: esPrioridad
-              ? const BorderSide(color: Colors.orange, width: 2)
+              ? const BorderSide(color: AppColors.deuda, width: 2)
               : BorderSide(color: Colors.grey.withValues(alpha: 0.15)),
         ),
         child: Padding(
@@ -817,7 +819,7 @@ class _DeudasScreenState extends State<DeudasScreen> {
                         vertical: 2,
                       ),
                       decoration: BoxDecoration(
-                        color: Colors.orange,
+                        color: AppColors.deuda,
                         borderRadius: BorderRadius.circular(20),
                       ),
                       child: const Text(
@@ -837,13 +839,13 @@ class _DeudasScreenState extends State<DeudasScreen> {
                         vertical: 2,
                       ),
                       decoration: BoxDecoration(
-                        color: Colors.red.shade100,
+                        color: AppColors.gasto.withValues(alpha: 0.12),
                         borderRadius: BorderRadius.circular(20),
                       ),
                       child: Text(
                         '${deuda.tasaInteres}% interés',
-                        style: TextStyle(
-                          color: Colors.red.shade700,
+                        style: const TextStyle(
+                          color: AppColors.gasto,
                           fontSize: 9,
                           fontWeight: FontWeight.bold,
                         ),
@@ -865,7 +867,7 @@ class _DeudasScreenState extends State<DeudasScreen> {
                         child: Row(
                           children: [
                             Icon(Icons.check_circle_outline,
-                                color: Colors.green, size: 18),
+                                color: AppColors.ingreso, size: 18),
                             SizedBox(width: 8),
                             Text('Registrar pago'),
                           ],
@@ -886,11 +888,11 @@ class _DeudasScreenState extends State<DeudasScreen> {
                         child: Row(
                           children: [
                             Icon(Icons.delete_outline,
-                                color: Colors.red, size: 18),
+                                color: AppColors.gasto, size: 18),
                             SizedBox(width: 8),
                             Text(
                               'Eliminar',
-                              style: TextStyle(color: Colors.red),
+                              style: TextStyle(color: AppColors.gasto),
                             ),
                           ],
                         ),
@@ -920,7 +922,7 @@ class _DeudasScreenState extends State<DeudasScreen> {
                                     Navigator.pop(ctx, true),
                                 child: const Text(
                                   'Eliminar',
-                                  style: TextStyle(color: Colors.red),
+                                  style: TextStyle(color: AppColors.gasto),
                                 ),
                               ),
                             ],
@@ -958,7 +960,7 @@ class _DeudasScreenState extends State<DeudasScreen> {
                     style: const TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
-                      color: Colors.red,
+                      color: AppColors.gasto,
                     ),
                   ),
                   Text(
@@ -976,9 +978,9 @@ class _DeudasScreenState extends State<DeudasScreen> {
                 child: LinearProgressIndicator(
                   value: deuda.porcentajePagado,
                   minHeight: 8,
-                  backgroundColor: Colors.red.withValues(alpha: 0.15),
+                  backgroundColor: AppColors.gasto.withValues(alpha: 0.15),
                   valueColor: const AlwaysStoppedAnimation<Color>(
-                    Colors.green,
+                    AppColors.ingreso,
                   ),
                 ),
               ),
@@ -990,7 +992,7 @@ class _DeudasScreenState extends State<DeudasScreen> {
                     '${(deuda.porcentajePagado * 100).toStringAsFixed(1)}% pagado',
                     style: const TextStyle(
                       fontSize: 11,
-                      color: Colors.green,
+                      color: AppColors.ingreso,
                       fontWeight: FontWeight.w500,
                     ),
                   ),
@@ -1068,7 +1070,7 @@ class _DeudasScreenState extends State<DeudasScreen> {
               icon: const Icon(Icons.add),
               label: const Text('Agregar primera deuda'),
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red.shade400,
+                backgroundColor: AppColors.gasto,
                 foregroundColor: Colors.white,
               ),
               onPressed: () => _mostrarFormularioDeuda(),
