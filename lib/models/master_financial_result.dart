@@ -10,6 +10,7 @@ import 'financial_risk.dart';
 import 'financial_strategy.dart';
 import 'financial_behavior.dart';
 import 'money_leak.dart';
+import 'cascada_mensual.dart';
 
 /// MasterFinancialResult — el único objeto que consume la UI.
 /// Contiene todo lo que necesita el dashboard, las notificaciones y Claude IA.
@@ -23,6 +24,9 @@ class MasterFinancialResult {
   final FinancialDistribution distribucion;
   final FinancialProjection proyeccion;
   final PlanPago planPago;
+
+  // ── Cascada de razonamiento (plan prescriptivo del mes) ───
+  final CascadaMensual cascada;
 
   // ── Insights y recomendaciones ────────────────────────────
   final List<FinancialInsight> insights;
@@ -45,6 +49,7 @@ class MasterFinancialResult {
     required this.distribucion,
     required this.proyeccion,
     required this.planPago,
+    required this.cascada,
     required this.insights,
     required this.recomendaciones,
     required this.riesgos,
@@ -65,6 +70,7 @@ class MasterFinancialResult {
       distribucion: FinancialDistribution.empty(),
       proyeccion: FinancialProjection.empty(),
       planPago: PlanPago.sinDeudas(),
+      cascada: CascadaMensual.empty(),
       insights: [],
       recomendaciones: [],
       riesgos: [],

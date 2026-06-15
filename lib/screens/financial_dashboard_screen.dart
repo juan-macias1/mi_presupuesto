@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../services/master_financial_brain.dart';
 import '../models/master_financial_result.dart';
+import '../models/cascada_mensual.dart';
 import '../models/modo_financiero.dart';
 import '../models/financial_distribution.dart';
 import '../models/financial_projection.dart';
@@ -474,7 +475,20 @@ class _FinancialDashboardScreenState
     final datosConfiables = result.distribucion.faseTipada !=
         FaseFinanciera.datosInsuficientes;
 
-    final hago = <Widget>[_buildDistribucion(result.distribucion)];
+    // "Lo que hago": la cascada (plan prescriptivo) va arriba como
+    // protagonista; la distribución del excedente queda debajo, como el
+    // detalle. Con datos insuficientes no mostramos la cascada — la
+    // distribución ya pide los gastos, no repetimos el mensaje.
+    final hago = <Widget>[];
+    if (datosConfiables) {
+      hago.add(_buildCascada(result.cascada));
+      hago.add(const SizedBox(height: 14));
+      hago.add(const Divider(height: 1));
+      hago.add(const SizedBox(height: 14));
+      hago.add(_buildDistribucion(result.distribucion));
+    } else {
+      hago.add(_buildDistribucion(result.distribucion));
+    }
     if (result.recomendaciones.isNotEmpty) {
       _agregarBloque(hago, 'Qué hacer',
           result.recomendaciones.map(_buildRecomendacion));
@@ -571,6 +585,163 @@ class _FinancialDashboardScreenState
         children: estoy,
       ),
     ];
+  }
+
+  // ── Cascada de razonamiento — el plan PRESCRIPTIVO del mes ─
+  // Reparte el ingreso EN ORDEN hasta el margen. Los renglones que no
+  // aplican (p. ej. las cuotas cuando no hay deuda) no se muestran; los
+  // destinos y el mensaje los decide el motor según el modo, no están
+  // escritos a mano. Así la misma cascada se ve distinta en ataque y en
+  // libertad.
+  Widget _buildCascada(CascadaMensual c) {
+    if (!c.datosSuficientes) return const SizedBox.shrink();
+
+    final margenPositivo = c.margen > 0;
+    final colorMargen = margenPositivo ? AppColors.primary : AppColors.gasto;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Ingreso — el punto de partida.
+        _cascadaFila(
+          'Me entra',
+          _fmt.format(c.ingresos),
+          color: AppColors.ingreso,
+          resaltarValor: true,
+        ),
+        const Divider(height: 18),
+
+        // Restas en orden — solo las que aplican.
+        if (c.gastosFijos > 0)
+          _cascadaFila('Pago lo fijo', '− ${_fmt.format(c.gastosFijos)}'),
+        if (c.cuotasDeuda > 0)
+          _cascadaFila('Pago mis cuotas', '− ${_fmt.format(c.cuotasDeuda)}'),
+        if (c.pagatePrimero > 0)
+          _cascadaFila(
+            'Me pago primero',
+            '− ${_fmt.format(c.pagatePrimero)}',
+            sub: c.destinoPagatePrimero,
+          ),
+        if (c.subsistencia > 0)
+          _cascadaFila(
+            'Como y me muevo',
+            '− ${_fmt.format(c.subsistencia)}',
+            sub: 'comida y transporte',
+          ),
+
+        const SizedBox(height: 12),
+
+        // Margen — lo que queda, destacado. Verde si sobra, rojo si falta.
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: colorMargen.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: colorMargen.withValues(alpha: 0.25)),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      margenPositivo ? 'Me queda' : 'Me falta',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: colorMargen,
+                      ),
+                    ),
+                    if (c.destinoMargen.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        c.destinoMargen,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: colorMargen.withValues(alpha: 0.85),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  _fmt.format(c.margen.abs()),
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: colorMargen,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        if (c.mensaje.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          Text(
+            c.mensaje,
+            style: TextStyle(
+              fontSize: 13,
+              height: 1.5,
+              color: Colors.grey.shade700,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  // Una fila del waterfall: etiqueta (con subtexto opcional) a la izquierda,
+  // monto a la derecha.
+  Widget _cascadaFila(
+    String label,
+    String valor, {
+    String? sub,
+    Color? color,
+    bool resaltarValor = false,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: const TextStyle(fontSize: 14)),
+                if (sub != null) ...[
+                  const SizedBox(height: 1),
+                  Text(
+                    sub,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey.shade500,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Text(
+            valor,
+            style: TextStyle(
+              fontSize: resaltarValor ? 18 : 15,
+              fontWeight: resaltarValor ? FontWeight.bold : FontWeight.w500,
+              color: color,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   // ── Helpers de las puertas ────────────────────────────────

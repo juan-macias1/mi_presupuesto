@@ -16,6 +16,7 @@ import '../models/money_leak.dart';
 import '../models/plan_pago.dart';
 import 'deuda_engine.dart';
 import 'distribution_engine.dart';
+import 'cascada_engine.dart';
 
 class MasterFinancialBrain {
   static final MasterFinancialBrain instance =
@@ -25,6 +26,7 @@ class MasterFinancialBrain {
   final _db = DatabaseHelper.instance;
   final _deudaEngine = DeudaEngine();
   final _distributionEngine = DistributionEngine();
+  final _cascadaEngine = CascadaEngine();
 
   // ── Cache para evitar recálculos innecesarios ─────────────
   MasterFinancialResult? _cache;
@@ -105,6 +107,34 @@ class MasterFinancialBrain {
       hayDatosSuficientes: datosSuficientesParaPlan,
     );
 
+    // PASO 5b: Cascada de razonamiento — el plan PRESCRIPTIVO del mes.
+    // A diferencia de la distribución (reparte lo que sobró), la cascada
+    // reparte el ingreso EN ORDEN. La subsistencia se calcula con los gastos
+    // reales del mes en Alimentación + Transporte (atado a datos, no a un %
+    // inventado); los gastos fijos de la cascada excluyen esas categorías
+    // para no contarlas dos veces.
+    const categoriasSubsistencia = {'Alimentación', 'Transporte'};
+    double subsistencia = 0;
+    double fijosCascada = 0;
+    for (final m in movimientosMes) {
+      if (m.tipo != 'gasto' || m.esDeuda) {
+        continue;
+      }
+      if (categoriasSubsistencia.contains(m.categoria)) {
+        subsistencia += m.valor;
+      } else if (m.esFijo) {
+        fijosCascada += m.valor;
+      }
+    }
+    final cascada = _cascadaEngine.calcular(
+      ingresos: flujo.ingresos,
+      gastosFijos: fijosCascada,
+      cuotasDeuda: flujo.cuotasDeuda,
+      subsistencia: subsistencia,
+      modo: modo,
+      hayDatosSuficientes: datosSuficientesParaPlan,
+    );
+
     // PASO 6: FinancialAnalysis — construido desde flujo (no recalcula)
     final analysis = _construirAnalysis(flujo, planPago);
 
@@ -144,6 +174,7 @@ class MasterFinancialBrain {
       distribucion: distribucion,
       proyeccion: proyeccion,
       planPago: planPago,
+      cascada: cascada,
       insights: insights,
       recomendaciones: recomendaciones,
       riesgos: riesgos,
