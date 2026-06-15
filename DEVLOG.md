@@ -304,3 +304,111 @@ Resolver un issue de UX detectado al usar el app en el dispositivo (Android pide
 - Configurar `AndroidManifest.xml` con `POST_NOTIFICATIONS` permission para Android 13+ si aparece como necesario en pruebas.
 
 ---
+
+## 2026-06-13 — La capa de honestidad del brain ("matar la mentira"), el sistema de color y las gráficas
+
+**Tiempo invertido:** [4 horas]
+**Fase:** Lógica del brain (honestidad del análisis) + sistema de diseño visual
+
+### Objetivo
+
+Abrí el dashboard y me mareé: los valores estaban inflados y los mensajes eran falsos, la app afirmaba cosas que no podía sostener. En Deudas, encima, los colores me abrumaban y las barras de avance se veían mal. Esta sesión fue para atacar las dos cosas de raíz: que el análisis nunca afirme lo que no puede respaldar con datos reales, y que el sistema visual deje de agredir y empiece a comunicar.
+
+### Trabajo realizado
+
+1. **Arreglo de raíz: que la app deje de mentir cuando faltan datos** (`f8e86af`). El problema: sin gastos creíbles registrados, el excedente del mes se inflaba hasta casi igualar el ingreso completo, y sobre ese excedente falso se calculaba todo — distribución, score, banner, proyección. Decidí la "Filosofía A": no calculo lo que no puedo afirmar. Implementé `hayGastosCreibles` (los gastos deben ser al menos el 15% del ingreso, no solo mayores que cero) y `datosSuficientesParaPlan`; cuando no se cumplen, cada componente muestra un estado honesto que pide registrar, en vez de un número inflado.
+
+2. **Capa de confianza** (`5231384`). Agregué `NivelConfianza {insuficiente, parcial, solida}`, calculada según la cantidad de movimientos del mes y qué día del mes es. Modula el tono de todos los mensajes: con datos insuficientes la app no afirma nada, solo invita a registrar; con parciales habla con cautela; con sólidos afirma con seguridad.
+
+3. **Recomendaciones, riesgos y estrategias honestas sin datos** (`ecc67af`). Maté el bug "0% de gastos = posición sólida". Con datos insuficientes, una deuda alta SÍ se avisa (es un hecho real, no depende del mes), pero la app ya no dice "sin riesgos, todo en orden" ni promete una fecha de libertad sobre cifras infladas.
+
+4. **DistributionEngine reescrito.** Dejó de leer la base de datos por su cuenta —lo que generaba doble fuente de verdad: el histórico del engine contra el mes actual del brain— y ahora consume el `FlujoMensual` que el brain ya calculó. Una sola fuente.
+
+5. **Sistema de color unificado** (`d8bb5cd`). Migré toda la app a `AppColors`, una única fuente con los tokens de marca (primary, gasto, ingreso, deuda, fondo, inversión, etc.). Se acabaron los colores sueltos repartidos por el código.
+
+6. **AppBars unificados y jerarquía de la pantalla de Deudas** (`a63972e`). Unifiqué los cuatro AppBars internos bajo el mismo patrón (surface, texto negro, sin elevación) y rediseñé la jerarquía visual de la pantalla de Deudas.
+
+7. **Rediseño de las gráficas del dashboard** (`095f695`). Reescribí `DashboardChartsCard`: ingresos contra gastos pasó a línea de tendencia, y las categorías a barras horizontales en la paleta de marca, reemplazando el donut que mostraba "100% Alimentación". Decisión consciente: la línea de tendencia solo se ve con dos o más meses de uso real; no fuerzo data falsa para llenarla.
+
+### Lo que funcionó
+
+- El disparador fue usar la app yo mismo. El mareo y la sensación de que me estaba mintiendo no salieron de leer código, salieron de abrirla como usuario. Eso fue lo que me ordenó qué arreglar primero.
+- Atacar la raíz —el excedente inflado— en lugar de los síntomas. Una vez que el cálculo dejó de hacerse sobre cifras falsas, el banner, el score, la proyección y las recomendaciones se volvieron honestos todos juntos, sin parchear cada uno por separado.
+- Centralizar el color en AppColors: cambiar un token y que se actualice toda la app, en vez de cazar colores sueltos por el código.
+
+### Lo que falló y cómo se resolvió
+
+- Las gráficas no comunicaban: el donut mostraba "100% Alimentación" y las barras de avance de Deudas se veían mal. Las reemplacé por una línea de tendencia (ingresos contra gastos) y barras horizontales en la paleta de marca.
+
+### Lecciones aprendidas
+
+- La honestidad no es solo ética, es usabilidad. Un tablero que infla números y afirma cosas falsas no solo está mal: marea y rompe la confianza. La app tiene que poder decir "todavía no sé" sin inventar.
+- Usar el producto uno mismo es el mejor detector de problemas. Ninguna revisión de código me mostró el mareo; abrirla como usuario sí. Es la razón por la que pienso seguir usándola con datos reales, no solo puliéndola en teoría.
+- El color es jerarquía, no decoración. En Deudas, demasiados colores compitiendo abrumaban; unificarlos bajo tokens de marca, con el rojo reservado para lo urgente, comunica más que la paleta saturada de antes.
+
+### Métricas
+
+- Commits del tramo: `5231384`, `f8e86af`, `ecc67af`, `d8bb5cd`, `a63972e`, `095f695`.
+- Estado de flutter analyze: 0 errores, 0 warnings (los info de estilo siguieron presentes).
+
+### Próximos pasos
+
+Rediseño del dashboard: hero, zona foco, tres puertas, score en línea fina y el arranque de la cascada de razonamiento.
+
+---
+
+## 2026-06-14 — Rediseño del dashboard: del muro de secciones al foco, y arranque de la cascada de razonamiento
+
+**Tiempo invertido:** [3 horas]
+**Fase:** Rediseño de UX del dashboard + arranque de la lógica de la cascada de razonamiento
+
+### Objetivo
+
+Convertir el dashboard de una lista plana de secciones apiladas en una jerarquía que responda, de un vistazo, las preguntas que de verdad importan. Y empezar a implementar la cascada de razonamiento priorizada, que es el corazón de la visión: que la app sea un copiloto que razona como mi propia cabeza, no una calculadora que reparte saldos. Todo bajo la misma regla de siempre: no mostrar ni afirmar ningún número que no pueda respaldar con datos reales.
+
+### Trabajo realizado
+
+1. **Hero "El foco".** Reescribí el banner de modo (`_buildBannerModo`) como un hero protagonista, distinto por modo, y borré `_buildBannerDato`, que quedó sin uso. Está en primera persona —la app me habla como mi propia cabeza— y cada modo tiene dos estados, con y sin datos creíbles. Con datos, el número grande es la fecha de libertad ("Me libero en N meses"); sin datos creíbles, muestra la deuda real y me pide registrar gastos, sin inventar una fecha.
+
+2. **Zona foco.** Adelgacé el hero: los datos de contexto (Debo, Para atacar) salieron a tarjetas debajo, y quité el botón a Deudas del foco junto con su import, que quedó sin uso.
+
+3. **Tres puertas.** Reorganicé las ocho secciones apiladas en tres tarjetas plegables, agrupadas por la pregunta que responden: "Lo que hago este mes", "Cómo estoy" y "Hacia dónde voy". Cada puerta cerrada muestra un resumen vivo sacado del motor. En supervivencia solo aparecen las dos puertas urgentes; oculté "Hacia dónde voy" porque proyectar crecimiento estando bajo el agua sería deshonesto. Le agregué a `DashboardSectionCard` un parámetro `resumen` opcional, sin romper llamadas existentes.
+
+4. **Score en línea fina.** Reemplacé la tarjeta grande del score por una línea delgada pegada al hero, visible solo cuando el score es real. Sin datos no se muestra nada, lo que eliminó el mensaje "registra tus gastos" que se repetía tres veces en la misma pantalla.
+
+5. **Decisión de voz.** Fijé que la app habla siempre en primera persona, no en segunda como un asesor externo. Es una decisión de identidad del producto: refuerza que la app es mi cerebro, no alguien dándome órdenes.
+
+6. **Arranque de la cascada de razonamiento.** Diseñé la cascada priorizada y dejé puesta su base: el modelo `CascadaMensual` y el `CascadaEngine`. Reparte el ingreso en orden: menos gastos fijos y cuotas, menos el 10% sagrado de "me pago primero", menos la reserva de subsistencia, y el margen restante ataca la deuda (o va a metas). Las variables salen del margen. Decisión: la subsistencia se calcula con mis gastos reales en Alimentación y Transporte, atada a datos, no a un porcentaje inventado. Todavía sin cablear al brain.
+
+### Lo que funcionó
+
+- Iterar el hero con mockups antes de tocar código. Validar la forma primero mantuvo el código alineado a la visión y evitó rehacer.
+- Agrupar por pregunta en lugar de un único "ver más". Tres puertas etiquetadas le dan al usuario un mapa; un solo botón que despliega todo solo retrasa el mismo muro.
+- Reutilizar los builders de sección que ya existían y cambiar únicamente cómo se agrupan. Cero lógica nueva dentro de las secciones, menos superficie donde esconder un bug.
+
+### Lo que falló y cómo se resolvió
+
+- Mandé dos ediciones juntas y solo entró una. El analyze daba limpio y la app seguía mostrando lo viejo, lo que despistaba. Lo razoné: si el analyze está limpio, no hay error de compilación, entonces el cambio no está en el archivo. Lo confirmé buscando una cadena única con Ctrl+F.
+- Un hot reload no reflejó un cambio de estructura; se resolvió con un hot restart completo.
+- Una corrida de commit no tomó nada porque me salté `git add`. Recordatorio del orden: `add`, `status`, `commit`, `push`.
+
+### Lecciones aprendidas
+
+- La honestidad es una decisión de producto, no un detalle. La regla en todo el rediseño fue una: si no puedo sostener un número con datos reales, no lo muestro.
+- Descriptivo no es lo mismo que prescriptivo. La distribución actual describe lo que sobró; la cascada prescribe cómo repartir el ingreso en orden, y eso convierte las variables en la palanca del mes.
+- Aplicar varias ediciones en un solo paso es frágil: una puede no entrar sin que nada explote. Mejor una por vez y verificar que el cambio está en el archivo antes de debuggear.
+
+### Métricas
+
+- Archivos modificados: `financial_dashboard_screen.dart`, `dashboard_section_card.dart`. Nuevos: `cascada_mensual.dart`, `cascada_engine.dart` (sin cablear).
+- Commits del día: `a817de0` (dashboard en tres puertas), `5c78d1e` (score como línea fina).
+- Estado de flutter analyze: 0 errores, 0 warnings, 29 info (style-only).
+
+### Próximos pasos
+
+- Cablear la cascada en el `MasterFinancialBrain` y mostrarla en la puerta "Lo que hago este mes".
+- Que el "me pago primero" rastree el saldo real del fondo.
+- Usar la app con datos reales para validar la lógica en la práctica.
+- Sigue en pausa BEHAVIOR_DESIGN.md
+
+---
