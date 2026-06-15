@@ -14,6 +14,7 @@ import 'services/notification_service.dart';
 import 'screens/metas_screen.dart';
 import 'screens/financial_dashboard_screen.dart';
 import 'screens/deudas_screen.dart';
+import 'screens/celebracion_deuda_screen.dart';
 
 // Nombre de la categoría "Deuda". Es una categoría ESPECIAL: vive en el
 // código, no en la tabla `categorias`, no se puede borrar ni editar desde
@@ -1110,6 +1111,80 @@ class _MyHomePageState extends State<MyHomePage> {
       'deuda_id': _deudaIdSeleccionada,
     };
 
+    // Detección de "saldé esta deuda": si el movimiento es una amortización
+    // y el saldo posterior llega a 0 o menos, vamos a disparar la pantalla
+    // de celebración full-screen una vez guardado el movimiento. La misma
+    // lógica vive también en _registrarAbono de DeudasScreen — la decisión
+    // del modelo es que el momento "saldé" no depende de la puerta de
+    // entrada (formulario principal o botón "Abonar al capital").
+    String? acreedorSaldado;
+    double? montoSaldado;
+    bool eraLaUltimaDeuda = false;
+    if (_deudaIdSeleccionada != null && existente == null) {
+      // Calcular saldo previo: saldo_inicial − suma de amortizaciones ya
+      // registradas para esta deuda (todavía sin el movimiento nuevo).
+      final deudasTodas =
+          await DatabaseHelper.instance.obtenerTodasLasDeudas();
+      final deudaTarget = deudasTodas.firstWhere(
+        (d) => d['id'] == _deudaIdSeleccionada,
+        orElse: () => {},
+      );
+      if (deudaTarget.isNotEmpty) {
+        final saldoInicial =
+            (deudaTarget['saldo_inicial'] as num).toDouble();
+        final movsTodos =
+            await DatabaseHelper.instance.obtenerMovimientos();
+        final pagosPrevios = movsTodos
+            .where((m) => m['deuda_id'] == _deudaIdSeleccionada)
+            .fold(
+              0.0,
+              (s, m) => s + (m['valor'] as num).toDouble(),
+            );
+        final saldoPrevio = saldoInicial - pagosPrevios;
+
+        // ── NIVEL 2: red de seguridad ──
+        // Si el saldo previo ya es <= 0, la deuda YA estaba saldada y la
+        // app no debería haber permitido llegar acá (el selector filtra
+        // saldadas). Si igual ocurre — race condition, edición de un
+        // movimiento viejo —, rechazamos el guardado y avisamos breve.
+        // Sin diálogo: el usuario no causó esto, no le pedimos decisión.
+        if (saldoPrevio <= 0) {
+          if (!mounted) return;
+          final acreedor =
+              deudaTarget['acreedor'] as String? ?? 'esa deuda';
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'La deuda con $acreedor ya está saldada. '
+                'No se guardó el movimiento.',
+              ),
+              duration: const Duration(seconds: 3),
+            ),
+          );
+          return;
+        }
+
+        // Saldo previo > 0: chequear si este movimiento la saldará.
+        final saldoPosterior = saldoPrevio - valor;
+        if (saldoPosterior <= 0) {
+          acreedorSaldado = deudaTarget['acreedor'] as String?;
+          montoSaldado = saldoInicial;
+          // ¿Quedan otras deudas activas? Si todas las demás ya están
+          // saldadas (saldo recalculado <= 0), esta era la última.
+          final otras = deudasTodas
+              .where((d) => d['id'] != _deudaIdSeleccionada)
+              .toList();
+          eraLaUltimaDeuda = otras.every((d) {
+            final si = (d['saldo_inicial'] as num).toDouble();
+            final pagosOtra = movsTodos
+                .where((m) => m['deuda_id'] == d['id'])
+                .fold(0.0, (s, m) => s + (m['valor'] as num).toDouble());
+            return (si - pagosOtra) <= 0;
+          });
+        }
+      }
+    }
+
     if (existente != null) {
       // UPDATE: preservamos id y la fecha original.
       await DatabaseHelper.instance.actualizarMovimiento({
@@ -1127,6 +1202,26 @@ class _MyHomePageState extends State<MyHomePage> {
     if (!mounted) return;
     Navigator.pop(context);
     await _cargarMovimientos();
+    await _cargarDeudasActivas(); // por si una deuda saldó, actualizamos el badge.
+
+    // Si este movimiento saldó una deuda, mostramos la celebración antes
+    // del snackbar. La pantalla se cierra con un tap del usuario y vuelve
+    // acá a continuar el flujo normal.
+    if (acreedorSaldado != null && montoSaldado != null) {
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => CelebracionDeudaScreen(
+            acreedor: acreedorSaldado!,
+            montoSaldado: montoSaldado!,
+            esLaUltimaDeuda: eraLaUltimaDeuda,
+          ),
+          fullscreenDialog: true,
+        ),
+      );
+      if (!mounted) return;
+      return; // ya celebramos; no mostrar el snackbar regular.
+    }
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -1237,8 +1332,41 @@ class _MyHomePageState extends State<MyHomePage> {
   // Selector de deuda — lista de deudas activas para vincular el pago.
   // Si el usuario elige una, la categoría se setea a "Deuda" y el switch
   // "Gasto fijo" se prende automáticamente.
+  //
+  // Filtra defensivamente por SALDO RECONCILIADO (no por el flag `activa`
+  // de la tabla, que puede estar desactualizado): solo aparecen deudas
+  // cuyo saldo_inicial − suma de amortizaciones es mayor a cero. Así no
+  // se puede vincular un pago a una deuda ya saldada por error.
   Future<void> _abrirSelectorDeudas(StateSetter setModalState) async {
-    final deudas = await DatabaseHelper.instance.obtenerDeudas();
+    final deudasCrudas = await DatabaseHelper.instance.obtenerDeudas();
+    final movimientosTodos =
+        await DatabaseHelper.instance.obtenerMovimientos();
+
+    // Pre-acumular pagos por deuda_id en una sola pasada.
+    final pagosPorDeuda = <int, double>{};
+    for (final m in movimientosTodos) {
+      final did = m['deuda_id'] as int?;
+      if (did == null) continue;
+      pagosPorDeuda[did] =
+          (pagosPorDeuda[did] ?? 0) + (m['valor'] as num).toDouble();
+    }
+
+    // Reconciliar y filtrar: solo deudas con saldo real > 0.
+    final deudas = deudasCrudas.where((d) {
+      final saldoInicial = (d['saldo_inicial'] as num).toDouble();
+      final pagado = pagosPorDeuda[d['id'] as int] ?? 0;
+      return (saldoInicial - pagado) > 0;
+    }).map((d) {
+      // Devolvemos el mapa con saldo_actual reconciliado, para que la UI
+      // muestre el saldo real y no el de la tabla.
+      final saldoInicial = (d['saldo_inicial'] as num).toDouble();
+      final pagado = pagosPorDeuda[d['id'] as int] ?? 0;
+      return {
+        ...d,
+        'saldo_actual':
+            (saldoInicial - pagado).clamp(0.0, saldoInicial),
+      };
+    }).toList();
 
     if (!mounted) return;
 

@@ -6,7 +6,9 @@ import '../models/master_financial_result.dart';
 import '../services/master_financial_brain.dart';
 import '../services/deuda_engine.dart';
 import '../db/database_helper.dart';
+import '../helpers/miles_input_formatter.dart';
 import '../theme/app_colors.dart';
+import 'celebracion_deuda_screen.dart';
 
 /// Pantalla de Deudas.
 ///
@@ -55,6 +57,14 @@ class _DeudasScreenState extends State<DeudasScreen> {
   // Se calcula en _cargarDatos a partir de los movimientos del histórico,
   // así el widget no tiene que tocar la DB en cada rebuild.
   double _amortizacionesActivasMonto = 0;
+
+  // Movimientos vinculados, indexados por deuda_id. Sirve para mostrar el
+  // historial de pagos expandible en cada tarjeta. Se calcula una sola
+  // vez en _cargarDatos y queda en memoria.
+  final Map<int, List<Map<String, dynamic>>> _pagosPorDeudaMap = {};
+
+  // Set de ids de deudas con el historial expandido en pantalla.
+  final Set<int> _historialExpandido = {};
 
   // Controllers formulario
   final _acreedorCtrl = TextEditingController();
@@ -122,14 +132,23 @@ class _DeudasScreenState extends State<DeudasScreen> {
 
     // Total de amortizaciones vinculadas a deudas activas: suma directa
     // sobre los movimientos. Fuente de verdad del "Ya pagaste".
+    // Al pasar también construyo el mapa pagosPorDeudaMap que alimenta el
+    // historial expandible — una sola pasada, dos resultados.
     final idsActivas = activas.map((d) => d.id).whereType<int>().toSet();
     double amortizacionesActivas = 0;
+    final nuevoPagosMap = <int, List<Map<String, dynamic>>>{};
     for (final m in movimientosMap) {
       final did = m['deuda_id'] as int?;
       if (did == null) continue;
+      nuevoPagosMap.putIfAbsent(did, () => []).add(m);
       if (idsActivas.contains(did)) {
         amortizacionesActivas += (m['valor'] as num).toDouble();
       }
+    }
+    // Ordenar cada lista de pagos por fecha descendente — más reciente arriba.
+    for (final lista in nuevoPagosMap.values) {
+      lista.sort((a, b) =>
+          (b['fecha'] as String).compareTo(a['fecha'] as String));
     }
 
     // Plan de pago: el brain ya calculó el modo; usamos el plan que arma
@@ -143,6 +162,9 @@ class _DeudasScreenState extends State<DeudasScreen> {
       _activas = activas;
       _saldadas = saldadas;
       _amortizacionesActivasMonto = amortizacionesActivas;
+      _pagosPorDeudaMap
+        ..clear()
+        ..addAll(nuevoPagosMap);
       _result = result;
       _plan = plan;
       _cargando = false;
@@ -339,6 +361,155 @@ class _DeudasScreenState extends State<DeudasScreen> {
         );
       },
     );
+  }
+
+  // ── Abonar al capital: pago extra a una deuda específica ─
+  /// Bottom sheet chico para registrar un abono extra al capital de una
+  /// deuda. Genera un movimiento vinculado normal (categoría "Deuda",
+  /// gasto fijo, deuda_id apuntando a esta deuda). Si el abono lleva la
+  /// deuda a saldo cero, dispara la pantalla de celebración.
+  void _mostrarAbonarCapital(Deuda deuda) {
+    final montoCtrl = TextEditingController();
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) {
+        return Padding(
+          padding: EdgeInsets.only(
+            left: 20,
+            right: 20,
+            top: 20,
+            bottom: MediaQuery.of(sheetContext).viewInsets.bottom + 20,
+          ),
+          child: StatefulBuilder(
+            builder: (sheetContext, setSheetState) {
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Abonar al capital — ${deuda.acreedor}',
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Saldo actual: ${_fmt.format(deuda.saldoActual)}',
+                    style: TextStyle(
+                      color: Colors.grey.shade600,
+                      fontSize: 13,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: montoCtrl,
+                    keyboardType: TextInputType.number,
+                    autofocus: true,
+                    inputFormatters: [MilesInputFormatter()],
+                    onChanged: (_) => setSheetState(() {}),
+                    decoration: const InputDecoration(
+                      labelText: 'Monto del abono',
+                      prefixText: '\$ ',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton.icon(
+                      icon: const Icon(Icons.savings_outlined),
+                      label: const Text('Registrar abono'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primary,
+                        foregroundColor: Colors.white,
+                        disabledBackgroundColor: Colors.grey.shade300,
+                      ),
+                      onPressed: MilesInputFormatter.parse(montoCtrl.text) != null
+                          ? () async {
+                              final monto = MilesInputFormatter.parse(
+                                    montoCtrl.text,
+                                  ) ??
+                                  0;
+                              if (monto <= 0) return;
+                              Navigator.pop(sheetContext);
+                              await _registrarAbono(deuda, monto);
+                            }
+                          : null,
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+
+  /// Inserta un movimiento vinculado a la deuda y, si el abono salda la
+  /// deuda, dispara la pantalla de celebración full-screen.
+  Future<void> _registrarAbono(Deuda deuda, double monto) async {
+    // Guardar el saldo previo ANTES de tocar nada, para detectar si este
+    // abono es el que cierra la deuda.
+    final saldoPrevio = deuda.saldoActual;
+    final saldoPosterior = saldoPrevio - monto;
+
+    // Insertar el movimiento como amortización: gasto fijo + categoría
+    // "Deuda" + deuda_id. Mismo formato que el formulario de movimientos.
+    await DatabaseHelper.instance.insertarMovimiento({
+      'tipo': 'gasto',
+      'categoria': 'Deuda',
+      'descripcion': 'Abono al capital',
+      'valor': monto,
+      'fecha': DateTime.now().toIso8601String(),
+      'es_fijo': 1,
+      'es_deuda': 0,
+      'acreedor': null,
+      'deuda_id': deuda.id,
+    });
+
+    if (!mounted) return;
+
+    // Si este abono saldó la deuda, mostramos celebración. La detectamos
+    // antes de recargar para no perder el estado previo.
+    final saldoLa = saldoPrevio > 0 && saldoPosterior <= 0;
+
+    await _cargarDatos();
+
+    if (!mounted) return;
+
+    if (saldoLa) {
+      // ¿Es la última deuda activa? Después del recargado, si _activas
+      // quedó vacía, sí lo era.
+      final esLaUltima = _activas.isEmpty;
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => CelebracionDeudaScreen(
+            acreedor: deuda.acreedor,
+            montoSaldado: deuda.saldoInicial,
+            esLaUltimaDeuda: esLaUltima,
+          ),
+          fullscreenDialog: true,
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Abono de ${_fmt.format(monto)} registrado. '
+            'Nuevo saldo: ${_fmt.format(saldoPosterior)}',
+          ),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
   }
 
   // ── Eliminar deuda: confirmación detallada ───────────────
@@ -1109,12 +1280,138 @@ class _DeudasScreenState extends State<DeudasScreen> {
                     ],
                   ),
                 ],
+
+                // ── Acciones: abonar al capital + ver historial ──
+                // Dos botones discretos en la base de la tarjeta. "Abonar
+                // al capital" abre un sheet chico para registrar un pago
+                // extra. "Ver pagos" toggle el historial expandible debajo.
+                const SizedBox(height: 12),
+                _accionesTarjeta(deuda),
+                _historialDeuda(deuda),
               ],
             ),
           ),
         ),
       );
     }).toList();
+  }
+
+  // ── Acciones en la base de cada tarjeta (abonar + historial) ───
+  Widget _accionesTarjeta(Deuda deuda) {
+    final pagos = _pagosPorDeudaMap[deuda.id ?? -1] ?? const [];
+    final expandido = _historialExpandido.contains(deuda.id);
+
+    return Row(
+      children: [
+        Expanded(
+          child: OutlinedButton.icon(
+            icon: const Icon(Icons.savings_outlined, size: 16),
+            label: const Text('Abonar al capital'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.primary,
+              side: BorderSide(
+                color: AppColors.primary.withValues(alpha: 0.4),
+              ),
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              textStyle: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            onPressed: () => _mostrarAbonarCapital(deuda),
+          ),
+        ),
+        const SizedBox(width: 8),
+        TextButton.icon(
+          icon: Icon(
+            expandido ? Icons.expand_less : Icons.expand_more,
+            size: 18,
+          ),
+          label: Text(
+            pagos.isEmpty
+                ? 'Sin pagos'
+                : 'Ver pagos (${pagos.length})',
+          ),
+          style: TextButton.styleFrom(
+            foregroundColor: Colors.grey.shade700,
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            textStyle: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          onPressed: pagos.isEmpty
+              ? null
+              : () => setState(() {
+                    if (expandido) {
+                      _historialExpandido.remove(deuda.id);
+                    } else if (deuda.id != null) {
+                      _historialExpandido.add(deuda.id!);
+                    }
+                  }),
+        ),
+      ],
+    );
+  }
+
+  // Bloque de historial expandido bajo la tarjeta. Solo se renderiza si
+  // esta deuda está en _historialExpandido. Lista cronológica descendente.
+  Widget _historialDeuda(Deuda deuda) {
+    if (!_historialExpandido.contains(deuda.id)) {
+      return const SizedBox.shrink();
+    }
+    final pagos = _pagosPorDeudaMap[deuda.id ?? -1] ?? const [];
+    if (pagos.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: Colors.grey.withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: pagos.map((m) {
+            final fecha = DateTime.parse(m['fecha'] as String);
+            final desc = (m['descripcion'] as String? ?? '').trim();
+            final valor = (m['valor'] as num).toDouble();
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                children: [
+                  Text(
+                    DateFormat('d MMM', 'es_CO').format(fecha),
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.grey.shade600,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      desc.isEmpty ? 'Pago' : desc,
+                      style: const TextStyle(fontSize: 12),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  Text(
+                    _fmt.format(valor),
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.primary,
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }).toList(),
+        ),
+      ),
+    );
   }
 
   // ── Sección plegable: Deudas saldadas (historial de logros) ───
