@@ -66,10 +66,25 @@ class MasterFinancialBrain {
     final movimientosHistorico =
         datos[1].map((m) => Movimiento.fromMap(m)).toList();
 
-    final deudas =
+    final deudasCrudas =
         datos[2].map((d) => Deuda.fromMap(d)).toList();
 
-    // PASO 2: FlujoMensual — números del mes calculados UNA SOLA VEZ
+    // PASO 1b: Reconciliar saldos de deudas según el MODELO_FINANCIERO.md.
+    // El saldo real de una deuda no se lee de la tabla — se calcula como
+    // saldo_inicial − suma de todas las amortizaciones vinculadas en el
+    // histórico. Si la suma de amortizaciones es 0 (sin pagos cargados),
+    // el saldo coincide con el saldo_inicial; si hay pagos, el saldo baja.
+    // Usamos el HISTÓRICO COMPLETO, no solo el mes, porque las amortizaciones
+    // de meses anteriores también redujeron el saldo.
+    final deudas = _reconciliarSaldosDeudas(
+      deudasCrudas,
+      movimientosHistorico,
+    );
+
+    // PASO 2: FlujoMensual — números del mes calculados UNA SOLA VEZ.
+    // A partir del modelo nuevo, el cálculo separa amortizaciones de gastos
+    // operativos: los movimientos con deuda_id son amortizaciones y NO
+    // entran como gastos operativos (no inflan el ratio ni las fugas).
     final flujo = _calcularFlujoMensual(movimientosMes, deudas);
 
     // PASO 3: ModoFinanciero — determinado automáticamente
@@ -112,12 +127,14 @@ class MasterFinancialBrain {
     // reparte el ingreso EN ORDEN. La subsistencia se calcula con los gastos
     // reales del mes en Alimentación + Transporte (atado a datos, no a un %
     // inventado); los gastos fijos de la cascada excluyen esas categorías
-    // para no contarlas dos veces.
+    // para no contarlas dos veces. Las cuotas de la cascada son las
+    // AMORTIZACIONES REALES del mes (movimientos con deuda_id) — no la
+    // cuota nominal declarada en la deuda.
     const categoriasSubsistencia = {'Alimentación', 'Transporte'};
     double subsistencia = 0;
     double fijosCascada = 0;
     for (final m in movimientosMes) {
-      if (m.tipo != 'gasto' || m.esDeuda) {
+      if (m.tipo != 'gasto' || m.esDeuda || m.deudaId != null) {
         continue;
       }
       if (categoriasSubsistencia.contains(m.categoria)) {
@@ -157,6 +174,17 @@ class MasterFinancialBrain {
     // devolvemos -1 = "no calculable" y el widget lo muestra honestamente.
     final score = datosSuficientesParaPlan ? _calcularScore(flujo) : -1;
 
+    // PASO 9b: ¿Cuántos meses de historial confiable hay?
+    // Un mes cuenta como "confiable" si tiene ingreso registrado Y gastos
+    // creíbles (>= 15% del ingreso). Sin gastos creíbles no podemos
+    // calcular margen real, y proyectar sobre eso sería mentir.
+    // Esta señal alimenta el "plan de liberación" de la pantalla de Deudas:
+    // si <2 meses confiables, mostramos "Aún aprendiendo tu ritmo" en lugar
+    // de una fecha inventada. Se evalúa al cierre del mes, así que el mes
+    // EN CURSO no cuenta (todavía está abierto).
+    final mesesConfiables = _contarMesesConfiables(movimientosHistorico);
+    final planConfiable = mesesConfiables >= 2;
+
     // PASO 10: Contexto IA — string completo listo para Claude
     final contextoIA = _construirContextoIA(
       flujo: flujo,
@@ -182,6 +210,8 @@ class MasterFinancialBrain {
       comportamiento: comportamiento,
       fugas: fugas,
       scoreFinanciero: score,
+      planConfiable: planConfiable,
+      mesesConfiables: mesesConfiables,
       contextoIA: contextoIA,
     );
 
@@ -189,6 +219,45 @@ class MasterFinancialBrain {
     _ultimoCalculo = DateTime.now();
     _cacheDataVersion = DatabaseHelper.dataVersion;
     return result;
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // PASO 1b: Reconciliación de saldos de deudas
+  // ══════════════════════════════════════════════════════════
+  /// Por cada deuda, calcula el saldo real como
+  /// `saldo_inicial − suma de amortizaciones vinculadas`.
+  /// Se conserva el resto de la deuda intacta (acreedor, cuota, etc.).
+  ///
+  /// Acotamos a saldo no-negativo: aunque las amortizaciones acumuladas
+  /// superen el saldo inicial (por error o por intereses no modelados en
+  /// v1), el saldo nunca queda en negativo en la presentación. Si llega
+  /// a 0, marcamos la deuda como inactiva.
+  List<Deuda> _reconciliarSaldosDeudas(
+    List<Deuda> deudasCrudas,
+    List<Movimiento> movimientosHistorico,
+  ) {
+    // Pre-acumular amortizaciones por deuda_id en una sola pasada.
+    final Map<int, double> pagosPorDeuda = {};
+    for (final m in movimientosHistorico) {
+      if (m.deudaId == null) continue;
+      pagosPorDeuda[m.deudaId!] =
+          (pagosPorDeuda[m.deudaId!] ?? 0) + m.valor;
+    }
+
+    return deudasCrudas.map((d) {
+      if (d.id == null) return d; // no debería pasar; defensivo.
+      final pagado = pagosPorDeuda[d.id!] ?? 0;
+      if (pagado <= 0) return d; // sin pagos vinculados: queda como está.
+
+      final saldoCalculado = (d.saldoInicial - pagado).clamp(
+        0.0,
+        d.saldoInicial,
+      );
+      return d.copyWith(
+        saldoActual: saldoCalculado,
+        activa: saldoCalculado > 0,
+      );
+    }).toList();
   }
 
   // ══════════════════════════════════════════════════════════
@@ -201,12 +270,21 @@ class MasterFinancialBrain {
     double ingresos = 0;
     double gastosFijos = 0;
     double gastosVariables = 0;
+    // Amortizaciones REALES del mes (movimientos con deuda_id apuntando
+    // a una deuda). Reemplazan a la "cuota nominal" como base para la
+    // línea "Pago mis cuotas" de la cascada. Si todavía no pagaste cuotas
+    // este mes, queda en 0 y la cascada no muestra esa línea.
+    double amortizacionesMes = 0;
 
     for (final m in movimientosMes) {
       if (m.tipo == 'ingreso') {
         ingresos += m.valor;
       } else if (m.tipo == 'gasto' && !m.esDeuda) {
-        if (m.esFijo) {
+        // MODELO_FINANCIERO.md: las amortizaciones (deuda_id no nulo)
+        // NO son gastos operativos. Se cuentan aparte como flujo a deuda.
+        if (m.deudaId != null) {
+          amortizacionesMes += m.valor;
+        } else if (m.esFijo) {
           gastosFijos += m.valor;
         } else {
           gastosVariables += m.valor;
@@ -214,14 +292,20 @@ class MasterFinancialBrain {
       }
     }
 
-    final cuotasDeuda = deudas.fold(0.0, (s, d) => s + d.cuotaMensual);
+    // totalDeudaReal: suma de saldos RECONCILIADOS (no los crudos de la
+    // tabla). Si todavía no hay amortizaciones cargadas, es la suma de
+    // saldos iniciales — igual que antes —. Cuando hay pagos vinculados,
+    // refleja la realidad.
     final totalDeudaReal = deudas.fold(0.0, (s, d) => s + d.saldoActual);
 
+    // cuotasDeuda: pasa a representar las amortizaciones reales del mes,
+    // no la cuota nominal declarada. La cascada usa este número para
+    // "Pago mis cuotas".
     return FlujoMensual(
       ingresos: ingresos,
       gastosFijos: gastosFijos,
       gastosVariables: gastosVariables,
-      cuotasDeuda: cuotasDeuda,
+      cuotasDeuda: amortizacionesMes,
       totalDeudaReal: totalDeudaReal,
     );
   }
@@ -297,7 +381,10 @@ class MasterFinancialBrain {
           '${m.fecha.year}-${m.fecha.month.toString().padLeft(2, '0')}';
       if (m.tipo == 'ingreso') {
         ingresosPorMes[clave] = (ingresosPorMes[clave] ?? 0) + m.valor;
-      } else if (m.tipo == 'gasto' && !m.esDeuda) {
+      } else if (m.tipo == 'gasto' && !m.esDeuda && m.deudaId == null) {
+        // MODELO_FINANCIERO.md: la proyección de gastos solo considera
+        // gastos operativos. Las amortizaciones quedan afuera del ratio
+        // y de la tendencia.
         if (m.esFijo) {
           fijosPorMes[clave] = (fijosPorMes[clave] ?? 0) + m.valor;
         } else {
@@ -749,7 +836,9 @@ class MasterFinancialBrain {
 
     for (final m in historico) {
       final clave = '${m.fecha.year}-${m.fecha.month}';
-      if (m.tipo == 'gasto' && !m.esDeuda) {
+      if (m.tipo == 'gasto' && !m.esDeuda && m.deudaId == null) {
+        // El análisis de comportamiento mira hábitos de consumo, no
+        // pagos de deuda. Las amortizaciones quedan afuera.
         if (m.fecha.weekday >= 6) {
           finDeSemana += m.valor;
         } else {
@@ -836,7 +925,9 @@ class MasterFinancialBrain {
 
     final Map<String, double> porCategoria = {};
     for (final m in movimientosMes) {
-      if (m.tipo == 'gasto' && !m.esDeuda) {
+      // MODELO_FINANCIERO.md: las amortizaciones no entran como fugas.
+      // No es consumo, no se "controla recortando" — se planifica.
+      if (m.tipo == 'gasto' && !m.esDeuda && m.deudaId == null) {
         porCategoria[m.categoria] =
             (porCategoria[m.categoria] ?? 0) + m.valor;
       }
@@ -941,7 +1032,7 @@ class MasterFinancialBrain {
     buf.writeln('- Ingresos: \$${flujo.ingresos.toStringAsFixed(0)}');
     buf.writeln('- Gastos fijos: \$${flujo.gastosFijos.toStringAsFixed(0)}');
     buf.writeln('- Gastos variables: \$${flujo.gastosVariables.toStringAsFixed(0)}');
-    buf.writeln('- Cuotas de deuda: \$${flujo.cuotasDeuda.toStringAsFixed(0)}');
+    buf.writeln('- Amortizaciones del mes: \$${flujo.cuotasDeuda.toStringAsFixed(0)}');
     buf.writeln('- Disponible neto: \$${flujo.disponibleNeto.toStringAsFixed(0)}');
     buf.writeln('- Disponible para atacar deuda: \$${flujo.disponibleParaDeuda.toStringAsFixed(0)}');
     buf.writeln('');
@@ -1012,6 +1103,49 @@ class MasterFinancialBrain {
       return {'estado': 'AJUSTADO', 'mensaje': 'Margen de ahorro limitado'};
     }
     return {'estado': 'SALUDABLE', 'mensaje': 'Buen control financiero'};
+  }
+
+  /// Cuenta cuántos meses CERRADOS (sin contar el mes en curso) tienen
+  /// datos confiables. Un mes cuenta como confiable si tiene ingreso
+  /// registrado Y gastos operativos creíbles (≥15% del ingreso).
+  ///
+  /// La pantalla de Deudas usa esta señal para decidir si el "plan de
+  /// liberación" se calcula desde el ritmo real o si todavía está
+  /// "aprendiendo tu ritmo". Necesita 2 o más meses para considerarse
+  /// confiable; con menos, no proyectamos para no inventar fechas.
+  int _contarMesesConfiables(List<Movimiento> historico) {
+    if (historico.isEmpty) return 0;
+
+    final hoy = DateTime.now();
+    final claveMesActual =
+        '${hoy.year}-${hoy.month.toString().padLeft(2, '0')}';
+
+    final Map<String, double> ingresosPorMes = {};
+    final Map<String, double> gastosOpPorMes = {};
+
+    for (final m in historico) {
+      final clave =
+          '${m.fecha.year}-${m.fecha.month.toString().padLeft(2, '0')}';
+      // El mes en curso queda fuera: todavía está abierto y no se puede
+      // declarar "completo" hasta que termine.
+      if (clave == claveMesActual) continue;
+
+      if (m.tipo == 'ingreso') {
+        ingresosPorMes[clave] = (ingresosPorMes[clave] ?? 0) + m.valor;
+      } else if (m.tipo == 'gasto' && !m.esDeuda && m.deudaId == null) {
+        gastosOpPorMes[clave] = (gastosOpPorMes[clave] ?? 0) + m.valor;
+      }
+    }
+
+    int confiables = 0;
+    ingresosPorMes.forEach((clave, ingreso) {
+      if (ingreso <= 0) return;
+      final gastos = gastosOpPorMes[clave] ?? 0;
+      // Misma regla que datosSuficientesParaPlan: gastos creíbles = ≥15%.
+      if (gastos >= ingreso * 0.15) confiables++;
+    });
+
+    return confiables;
   }
 }
 

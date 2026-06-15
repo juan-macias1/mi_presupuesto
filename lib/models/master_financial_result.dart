@@ -39,6 +39,13 @@ class MasterFinancialResult {
   // ── Score ─────────────────────────────────────────────────
   final int scoreFinanciero;
 
+  // ── Confianza del plan de liberación ──────────────────────
+  // planConfiable=true cuando hay ≥2 meses CERRADOS con datos completos
+  // (ingreso + gastos operativos creíbles). La pantalla de Deudas usa
+  // esto para mostrar el plan real o el cartel "Aún aprendiendo tu ritmo".
+  final bool planConfiable;
+  final int mesesConfiables;
+
   // ── Contexto listo para Claude IA ────────────────────────
   final String contextoIA;
 
@@ -57,6 +64,8 @@ class MasterFinancialResult {
     required this.comportamiento,
     required this.fugas,
     required this.scoreFinanciero,
+    required this.planConfiable,
+    required this.mesesConfiables,
     required this.contextoIA,
   });
 
@@ -78,6 +87,8 @@ class MasterFinancialResult {
       comportamiento: [],
       fugas: [],
       scoreFinanciero: 0,
+      planConfiable: false,
+      mesesConfiables: 0,
       contextoIA: 'Sin datos registrados aún.',
     );
   }

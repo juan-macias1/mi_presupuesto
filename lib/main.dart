@@ -535,13 +535,39 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   Future<void> _eliminarMovimiento(int id) async {
+    // Si el movimiento tenía un deuda_id vinculado, su eliminación va a
+    // devolverle el saldo a esa deuda (el brain recalcula saldos como
+    // saldo_inicial − suma de amortizaciones). Avisamos al usuario antes
+    // de eso, porque es un cambio que afecta una segunda entidad.
+    final movimiento = _movimientos.firstWhere(
+      (m) => m['id'] == id,
+      orElse: () => {},
+    );
+    final deudaIdVinculada = movimiento['deuda_id'] as int?;
+    String? acreedorVinculado;
+    if (deudaIdVinculada != null) {
+      final deudas =
+          await DatabaseHelper.instance.obtenerTodasLasDeudas();
+      final encontrada = deudas.firstWhere(
+        (d) => d['id'] == deudaIdVinculada,
+        orElse: () => {},
+      );
+      if (encontrada.isNotEmpty) {
+        acreedorVinculado = encontrada['acreedor'] as String?;
+      }
+    }
+
+    final contenidoDialog = deudaIdVinculada != null
+        ? "Este movimiento estaba vinculado a la deuda con "
+            "${acreedorVinculado ?? 'tu acreedor'}. Si lo eliminás, "
+            "ese monto vuelve a sumarse al saldo de la deuda. ¿Confirmás?"
+        : "¿Estás seguro que deseas eliminar este movimiento?";
+
     final confirmar = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text("Eliminar movimiento"),
-        content: const Text(
-          "¿Estás seguro que deseas eliminar este movimiento?",
-        ),
+        content: Text(contenidoDialog),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -560,9 +586,13 @@ class _MyHomePageState extends State<MyHomePage> {
       if (!mounted) return;
       await _cargarMovimientos();
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Movimiento eliminado"),
-          duration: Duration(seconds: 2),
+        SnackBar(
+          content: Text(
+            deudaIdVinculada != null
+                ? "Movimiento eliminado · saldo devuelto a la deuda"
+                : "Movimiento eliminado",
+          ),
+          duration: const Duration(seconds: 2),
         ),
       );
     }

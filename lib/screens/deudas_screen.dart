@@ -2,10 +2,27 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../models/deuda.dart';
 import '../models/plan_pago.dart';
+import '../models/master_financial_result.dart';
+import '../services/master_financial_brain.dart';
 import '../services/deuda_engine.dart';
 import '../db/database_helper.dart';
 import '../theme/app_colors.dart';
 
+/// Pantalla de Deudas.
+///
+/// Esta versión está alineada con MODELO_FINANCIERO.md:
+/// - Los saldos NO se leen crudos de la tabla; vienen del brain, que los
+///   reconcilia restando las amortizaciones vinculadas.
+/// - No hay "Registrar pago" desde la pantalla. La única puerta de entrada
+///   a un pago es el formulario de movimientos (categoría "Deuda").
+/// - El plan de liberación no se proyecta sobre datos parciales: si no
+///   hay ≥2 meses cerrados con datos completos, se muestra "Aún aprendiendo
+///   tu ritmo" en lugar de inventar una fecha.
+/// - Las deudas saldadas se conservan abajo en una sección plegable como
+///   historial de logros, no se borran.
+/// - Eliminar una deuda con pagos vinculados borra TAMBIÉN esos pagos:
+///   la plata se asignó a algo que ya no existe; mantenerlos como gastos
+///   operativos mentiría sobre el consumo del usuario.
 class DeudasScreen extends StatefulWidget {
   const DeudasScreen({super.key});
 
@@ -14,6 +31,7 @@ class DeudasScreen extends StatefulWidget {
 }
 
 class _DeudasScreenState extends State<DeudasScreen> {
+  final _brain = MasterFinancialBrain.instance;
   final _engine = DeudaEngine();
   final _db = DatabaseHelper.instance;
 
@@ -23,9 +41,20 @@ class _DeudasScreenState extends State<DeudasScreen> {
     decimalDigits: 0,
   );
 
-  List<Deuda> _deudas = [];
+  // Estado: deudas activas (con saldo > 0) y saldadas (saldo = 0), ambas
+  // ya reconciliadas. _result trae la señal planConfiable.
+  List<Deuda> _activas = [];
+  List<Deuda> _saldadas = [];
+  MasterFinancialResult? _result;
   PlanPago? _plan;
   bool _cargando = true;
+  bool _verSaldadas = false;
+
+  // Total de amortizaciones vinculadas a deudas ACTIVAS. Es la fuente de
+  // verdad para el "Ya pagaste" del panel, según MODELO_FINANCIERO.md.
+  // Se calcula en _cargarDatos a partir de los movimientos del histórico,
+  // así el widget no tiene que tocar la DB en cada rebuild.
+  double _amortizacionesActivasMonto = 0;
 
   // Controllers formulario
   final _acreedorCtrl = TextEditingController();
@@ -52,24 +81,79 @@ class _DeudasScreenState extends State<DeudasScreen> {
     super.dispose();
   }
 
+  // ── Carga: una sola fuente de verdad (el brain) ──────────
   Future<void> _cargarDatos() async {
     setState(() => _cargando = true);
 
-    final deudasData = await _db.obtenerDeudas();
-    final deudas = deudasData.map((d) => Deuda.fromMap(d)).toList();
+    // El brain ya reconcilia los saldos. Le pedimos análisis forzado para
+    // tener los datos frescos después de cualquier cambio (registrar pago,
+    // editar, eliminar).
+    final result = await _brain.analizar(forzar: true);
 
-    // Pago disponible = suma de cuotas + cualquier excedente
-    final cuotasBase = deudas.fold(0.0, (s, d) => s + d.cuotaMensual);
+    // Para tener TODAS las deudas (activas + saldadas) reconciliadas,
+    // necesitamos hacer el mismo trabajo que el brain hace internamente
+    // pero incluyendo las inactivas. Lo más limpio es leer todas y
+    // recalcular saldos con los movimientos del histórico.
+    final todasMap = await _db.obtenerTodasLasDeudas();
+    final todasCrudas = todasMap.map((d) => Deuda.fromMap(d)).toList();
+    final movimientosMap = await _db.obtenerMovimientos();
+    final pagosPorDeuda = <int, double>{};
+    for (final m in movimientosMap) {
+      final did = m['deuda_id'] as int?;
+      if (did == null) continue;
+      pagosPorDeuda[did] =
+          (pagosPorDeuda[did] ?? 0) + (m['valor'] as num).toDouble();
+    }
+    final todas = todasCrudas.map((d) {
+      if (d.id == null) return d;
+      final pagado = pagosPorDeuda[d.id!] ?? 0;
+      if (pagado <= 0) return d;
+      final saldoCalc =
+          (d.saldoInicial - pagado).clamp(0.0, d.saldoInicial);
+      return d.copyWith(
+        saldoActual: saldoCalc,
+        activa: saldoCalc > 0,
+      );
+    }).toList();
+
+    final activas = todas.where((d) => d.saldoActual > 0).toList()
+      ..sort((a, b) => a.ordenPago.compareTo(b.ordenPago));
+    final saldadas = todas.where((d) => d.saldoActual <= 0).toList();
+
+    // Total de amortizaciones vinculadas a deudas activas: suma directa
+    // sobre los movimientos. Fuente de verdad del "Ya pagaste".
+    final idsActivas = activas.map((d) => d.id).whereType<int>().toSet();
+    double amortizacionesActivas = 0;
+    for (final m in movimientosMap) {
+      final did = m['deuda_id'] as int?;
+      if (did == null) continue;
+      if (idsActivas.contains(did)) {
+        amortizacionesActivas += (m['valor'] as num).toDouble();
+      }
+    }
+
+    // Plan de pago: el brain ya calculó el modo; usamos el plan que arma
+    // el engine sobre el flujo del mes — pero la confianza del plan la
+    // controla _result.planConfiable.
+    final cuotasBase = activas.fold(0.0, (s, d) => s + d.cuotaMensual);
     final plan = await _engine.generarPlanPago(cuotasBase);
 
+    if (!mounted) return;
     setState(() {
-      _deudas = deudas;
+      _activas = activas;
+      _saldadas = saldadas;
+      _amortizacionesActivasMonto = amortizacionesActivas;
+      _result = result;
       _plan = plan;
       _cargando = false;
     });
   }
 
-  // ── Agregar deuda ─────────────────────────────────────────
+  /// Total de amortizaciones vinculadas a deudas activas. Lectura barata
+  /// del valor precalculado en _cargarDatos.
+  double _amortizacionesActivas() => _amortizacionesActivasMonto;
+
+  // ── Formulario crear/editar deuda ────────────────────────
   void _mostrarFormularioDeuda({Deuda? deudaExistente}) {
     if (deudaExistente != null) {
       _acreedorCtrl.text = deudaExistente.acreedor;
@@ -257,93 +341,71 @@ class _DeudasScreenState extends State<DeudasScreen> {
     );
   }
 
-  // ── Registrar pago ────────────────────────────────────────
-  void _mostrarRegistrarPago(Deuda deuda) {
-    final pagoCtrl = TextEditingController(
-      text: deuda.cuotaMensual.toStringAsFixed(0),
+  // ── Eliminar deuda: confirmación detallada ───────────────
+  /// Cuenta los movimientos vinculados a una deuda y su monto total, y
+  /// muestra un diálogo que deja claro el alcance del borrado antes de
+  /// ejecutarlo. Si confirma, borra primero los movimientos y después la
+  /// deuda — todo en orden para no dejar referencias colgando.
+  Future<void> _confirmarEliminarDeuda(Deuda deuda) async {
+    // Buscar todos los movimientos vinculados a esta deuda.
+    final movimientosMap = await _db.obtenerMovimientos();
+    final vinculados = movimientosMap
+        .where((m) => m['deuda_id'] == deuda.id)
+        .toList();
+    final cantPagos = vinculados.length;
+    final totalPagos =
+        vinculados.fold(0.0, (s, m) => s + (m['valor'] as num).toDouble());
+
+    if (!mounted) return;
+
+    final mensaje = cantPagos == 0
+        ? '¿Eliminar la deuda con ${deuda.acreedor}?'
+        : 'Esto eliminará la deuda con ${deuda.acreedor} y también '
+            '${cantPagos == 1 ? '1 movimiento' : '$cantPagos movimientos'} '
+            'asociado${cantPagos == 1 ? '' : 's'} por un total de '
+            '${_fmt.format(totalPagos)}. ¿Confirmás?';
+
+    final confirmar = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Eliminar deuda'),
+        content: Text(mensaje),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text(
+              'Eliminar',
+              style: TextStyle(color: AppColors.gasto),
+            ),
+          ),
+        ],
+      ),
     );
 
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    if (confirmar != true) return;
+
+    // Borrar primero los movimientos vinculados, después la deuda.
+    for (final m in vinculados) {
+      await _db.eliminarMovimiento(m['id'] as int);
+    }
+    await _db.eliminarDeuda(deuda.id!);
+
+    if (!mounted) return;
+    await _cargarDatos();
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          cantPagos == 0
+              ? 'Deuda eliminada'
+              : 'Deuda y $cantPagos movimiento${cantPagos == 1 ? '' : 's'} eliminados',
+        ),
+        duration: const Duration(seconds: 2),
       ),
-      builder: (context) {
-        return Padding(
-          padding: EdgeInsets.only(
-            left: 20,
-            right: 20,
-            top: 20,
-            bottom: MediaQuery.of(context).viewInsets.bottom + 20,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Registrar pago — ${deuda.acreedor}',
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Saldo actual: ${_fmt.format(deuda.saldoActual)}',
-                style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: pagoCtrl,
-                keyboardType: TextInputType.number,
-                autofocus: true,
-                decoration: const InputDecoration(
-                  labelText: '¿Cuánto pagaste?',
-                  prefixText: '\$ ',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                height: 48,
-                child: ElevatedButton.icon(
-                  icon: const Icon(Icons.check_circle_outline),
-                  label: const Text('Confirmar pago'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.ingreso,
-                    foregroundColor: Colors.white,
-                  ),
-                  onPressed: () async {
-                    final monto = double.tryParse(pagoCtrl.text) ?? 0;
-                    if (monto <= 0) return;
-
-                    await _engine.registrarPago(deuda.id!, monto);
-
-                    if (!mounted) return;
-                    Navigator.pop(context);
-                    await _cargarDatos();
-
-                    final nuevaSaldo = deuda.saldoActual - monto;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          nuevaSaldo <= 0
-                              ? '🎉 ¡Deuda con ${deuda.acreedor} pagada!'
-                              : 'Pago registrado ✅ Saldo: ${_fmt.format(nuevaSaldo)}',
-                        ),
-                        backgroundColor:
-                            nuevaSaldo <= 0 ? AppColors.ingreso : null,
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        );
-      },
     );
   }
 
@@ -382,7 +444,8 @@ class _DeudasScreenState extends State<DeudasScreen> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    '¿Cuánto tiempo ahorras si pagas más cada mes?',
+                    '¿Cuánto tiempo ahorras si pagas más cada mes? '
+                    'El cálculo usa tus saldos reales.',
                     style: TextStyle(
                       color: Colors.grey.shade600,
                       fontSize: 13,
@@ -498,7 +561,7 @@ class _DeudasScreenState extends State<DeudasScreen> {
         elevation: 0,
         title: const Text('Mis Deudas'),
         actions: [
-          if (_deudas.isNotEmpty)
+          if (_activas.isNotEmpty)
             IconButton(
               icon: const Icon(Icons.calculate_outlined),
               tooltip: 'Simular pago extra',
@@ -513,34 +576,35 @@ class _DeudasScreenState extends State<DeudasScreen> {
       ),
       body: _cargando
           ? const Center(child: CircularProgressIndicator())
-          : _deudas.isEmpty
-          ? _buildEstadoVacio()
-          : RefreshIndicator(
-              onRefresh: _cargarDatos,
-              child: ListView(
-                padding: const EdgeInsets.all(16),
-                children: [
-                  // Resumen general
-                  _buildResumenGeneral(),
-                  const SizedBox(height: 16),
-
-                  // Plan de liberación
-                  if (_plan != null) _buildPlanLiberacion(_plan!),
-                  const SizedBox(height: 16),
-
-                  // Lista de deudas
-                  const Text(
-                    'Tus deudas',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
+          : (_activas.isEmpty && _saldadas.isEmpty)
+              ? _buildEstadoVacio()
+              : RefreshIndicator(
+                  onRefresh: _cargarDatos,
+                  child: ListView(
+                    padding: const EdgeInsets.all(16),
+                    children: [
+                      if (_activas.isNotEmpty) ...[
+                        _buildResumenGeneral(),
+                        const SizedBox(height: 16),
+                        if (_plan != null) _buildPlanLiberacion(_plan!),
+                        const SizedBox(height: 16),
+                        const Text(
+                          'Tus deudas',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        ..._buildListaDeudas(),
+                      ],
+                      if (_saldadas.isNotEmpty) ...[
+                        const SizedBox(height: 16),
+                        _buildSeccionSaldadas(),
+                      ],
+                    ],
                   ),
-                  const SizedBox(height: 8),
-                  ..._buildListaDeudas(),
-                ],
-              ),
-            ),
+                ),
       floatingActionButton: FloatingActionButton(
         onPressed: () => _mostrarFormularioDeuda(),
         tooltip: 'Agregar deuda',
@@ -551,13 +615,18 @@ class _DeudasScreenState extends State<DeudasScreen> {
   }
 
   // ── Resumen general ───────────────────────────────────────
-  // ── Resumen general ───────────────────────────────────────
+  // El "ya pagado" se calcula como suma de amortizaciones vinculadas a
+  // deudas ACTIVAS — la fuente de verdad del MODELO_FINANCIERO.md. No
+  // hacemos saldo_inicial − saldo_actual porque esos dos campos pueden
+  // tener desbalances históricos (intereses no modelados en v1, ediciones
+  // pasadas) y la fórmula vieja se rompía. Las amortizaciones son hechos
+  // registrados, inmunes a esos desbalances.
   Widget _buildResumenGeneral() {
-    final totalDeuda = _deudas.fold(0.0, (s, d) => s + d.saldoActual);
-    final totalInicial = _deudas.fold(0.0, (s, d) => s + d.saldoInicial);
-    final yaPagado = totalInicial - totalDeuda;
-    final progreso = totalInicial > 0
-        ? (yaPagado / totalInicial).clamp(0.0, 1.0).toDouble()
+    final totalDeuda = _activas.fold(0.0, (s, d) => s + d.saldoActual);
+    final yaPagado = _amortizacionesActivas();
+    final base = yaPagado + totalDeuda; // base honesta para el progreso.
+    final progreso = base > 0
+        ? (yaPagado / base).clamp(0.0, 1.0).toDouble()
         : 0.0;
 
     return Card(
@@ -571,7 +640,6 @@ class _DeudasScreenState extends State<DeudasScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // El número que manda: lo que falta pagar.
             Text(
               'Te falta pagar',
               style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
@@ -588,12 +656,11 @@ class _DeudasScreenState extends State<DeudasScreen> {
             ),
             const SizedBox(height: 14),
 
-            // Progreso como hilo fino — comunica sin saturar.
             ClipRRect(
               borderRadius: BorderRadius.circular(2),
               child: LinearProgressIndicator(
                 value: progreso,
-                minHeight: 1,
+                minHeight: 2,
                 backgroundColor: Colors.grey.withValues(alpha: 0.15),
                 valueColor:
                     const AlwaysStoppedAnimation<Color>(AppColors.primary),
@@ -601,7 +668,6 @@ class _DeudasScreenState extends State<DeudasScreen> {
             ),
             const SizedBox(height: 8),
 
-            // Contexto secundario: todo en gris, sin competir.
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -622,8 +688,63 @@ class _DeudasScreenState extends State<DeudasScreen> {
   }
 
   // ── Plan de liberación ────────────────────────────────────
-  // ── Plan de liberación ────────────────────────────────────
   Widget _buildPlanLiberacion(PlanPago plan) {
+    final confiable = _result?.planConfiable ?? false;
+    final meses = _result?.mesesConfiables ?? 0;
+
+    // Caso 1: no hay datos confiables todavía. Sin proyección — solo el
+    // cartel honesto. Las "promesas" llegan cuando hay historial real.
+    if (!confiable) {
+      return Card(
+        elevation: 0,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: Colors.grey.withValues(alpha: 0.12)),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.hourglass_empty_rounded,
+                  size: 20, color: Colors.grey.shade600),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Aún aprendiendo tu ritmo',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      meses == 0
+                          ? 'Necesito al menos 2 meses cerrados con ingresos '
+                              'y gastos registrados para calcular tu fecha '
+                              'de libertad con honestidad.'
+                          : 'Llevo $meses mes con datos completos. Con uno '
+                              'más, puedo proyectar tu plan real.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey.shade700,
+                        height: 1.5,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // Caso 2: plan insuficiente — los pagos no alcanzan a cubrir los
+    // intereses. Mensaje del engine, sin maquillar.
     if (plan.esInsuficiente) {
       return Card(
         elevation: 0,
@@ -650,6 +771,7 @@ class _DeudasScreenState extends State<DeudasScreen> {
       );
     }
 
+    // Caso 3: plan confiable y viable.
     final iconoEstrategia = switch (plan.estrategia) {
       'SPRINT' => Icons.rocket_launch_outlined,
       'AGRESIVA' => Icons.local_fire_department_outlined,
@@ -668,7 +790,6 @@ class _DeudasScreenState extends State<DeudasScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Título neutro: ícono gris, texto negro. Sin color de bloque.
             Row(
               children: [
                 Icon(iconoEstrategia, color: Colors.grey.shade700, size: 18),
@@ -689,32 +810,29 @@ class _DeudasScreenState extends State<DeudasScreen> {
             ),
             const SizedBox(height: 16),
 
-            // Los tres datos: todos en gris oscuro, neutros. Jerarquía
-            // por tamaño, no por color.
+            // Los dos datos clave del plan. La "cuota total" desapareció:
+            // sumar cuotas mínimas no aporta información útil al usuario;
+            // cada deuda muestra su cuota en su propia tarjeta.
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                _buildPlanDato(
-                  'Libre en',
-                  '${plan.mesesParaLiberarse} meses',
+                Expanded(
+                  child: _buildPlanDato(
+                    'Libre en',
+                    '${plan.mesesParaLiberarse} meses',
+                  ),
                 ),
-                _buildPlanDato(
-                  'Fecha',
-                  plan.fechaLiberacion != null
-                      ? DateFormat('MMM y', 'es_CO')
-                          .format(plan.fechaLiberacion!)
-                      : '—',
-                ),
-                _buildPlanDato(
-                  'Cuota',
-                  _fmt.format(
-                    _deudas.fold(0.0, (s, d) => s + d.cuotaMensual),
+                Expanded(
+                  child: _buildPlanDato(
+                    'Fecha',
+                    plan.fechaLiberacion != null
+                        ? DateFormat('MMM y', 'es_CO')
+                            .format(plan.fechaLiberacion!)
+                        : '—',
                   ),
                 ),
               ],
             ),
 
-            // Ataca primero — el único acento naranja, sutil.
             if (plan.detallePorDeuda.isNotEmpty) ...[
               const SizedBox(height: 14),
               Container(
@@ -766,6 +884,7 @@ class _DeudasScreenState extends State<DeudasScreen> {
 
   Widget _buildPlanDato(String label, String valor) {
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           label,
@@ -784,9 +903,9 @@ class _DeudasScreenState extends State<DeudasScreen> {
     );
   }
 
-  // ── Lista de deudas ───────────────────────────────────────
+  // ── Lista de deudas activas ───────────────────────────────
   List<Widget> _buildListaDeudas() {
-    return _deudas.map((deuda) {
+    return _activas.map((deuda) {
       final esPrioridad = _plan?.detallePorDeuda.isNotEmpty == true &&
           _plan!.detallePorDeuda.first.deudaId == deuda.id;
 
@@ -802,7 +921,6 @@ class _DeudasScreenState extends State<DeudasScreen> {
           side: BorderSide(color: Colors.grey.withValues(alpha: 0.12)),
         ),
         child: Container(
-          // El acento de prioridad: un borde lateral naranja, sutil.
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(14),
             border: esPrioridad
@@ -816,7 +934,9 @@ class _DeudasScreenState extends State<DeudasScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Fila 1: nombre del acreedor (protagonista) + menú.
+                // Fila 1: nombre del acreedor + chip prioritaria + menú.
+                // Sin "Registrar pago": esa entrada se elimina. El registro
+                // de cuotas vive en el formulario de movimientos.
                 Row(
                   children: [
                     Expanded(
@@ -848,19 +968,8 @@ class _DeudasScreenState extends State<DeudasScreen> {
                           ),
                         ),
                       ),
-                    PopupMenuButton(
+                    PopupMenuButton<String>(
                       itemBuilder: (context) => [
-                        const PopupMenuItem(
-                          value: 'pagar',
-                          child: Row(
-                            children: [
-                              Icon(Icons.check_circle_outline,
-                                  color: AppColors.ingreso, size: 18),
-                              SizedBox(width: 8),
-                              Text('Registrar pago'),
-                            ],
-                          ),
-                        ),
                         const PopupMenuItem(
                           value: 'editar',
                           child: Row(
@@ -885,43 +994,16 @@ class _DeudasScreenState extends State<DeudasScreen> {
                         ),
                       ],
                       onSelected: (value) async {
-                        if (value == 'pagar') {
-                          _mostrarRegistrarPago(deuda);
-                        } else if (value == 'editar') {
+                        if (value == 'editar') {
                           _mostrarFormularioDeuda(deudaExistente: deuda);
                         } else if (value == 'eliminar') {
-                          final confirmar = await showDialog<bool>(
-                            context: context,
-                            builder: (ctx) => AlertDialog(
-                              title: const Text('Eliminar deuda'),
-                              content: Text(
-                                '¿Eliminar la deuda con ${deuda.acreedor}?',
-                              ),
-                              actions: [
-                                TextButton(
-                                  onPressed: () => Navigator.pop(ctx, false),
-                                  child: const Text('Cancelar'),
-                                ),
-                                TextButton(
-                                  onPressed: () => Navigator.pop(ctx, true),
-                                  child: const Text('Eliminar',
-                                      style:
-                                          TextStyle(color: AppColors.gasto)),
-                                ),
-                              ],
-                            ),
-                          );
-                          if (confirmar == true) {
-                            await _db.eliminarDeuda(deuda.id!);
-                            await _cargarDatos();
-                          }
+                          await _confirmarEliminarDeuda(deuda);
                         }
                       },
                     ),
                   ],
                 ),
 
-                // Descripción + interés como contexto gris en una línea.
                 if (deuda.descripcion.isNotEmpty || deuda.tasaInteres > 0) ...[
                   const SizedBox(height: 2),
                   Text(
@@ -939,7 +1021,8 @@ class _DeudasScreenState extends State<DeudasScreen> {
 
                 const SizedBox(height: 12),
 
-                // El saldo: importante (rojo) pero el "de X" es contexto gris.
+                // Saldo reconciliado: lo que realmente debés HOY, después
+                // de descontar todas las amortizaciones vinculadas.
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.baseline,
                   textBaseline: TextBaseline.alphabetic,
@@ -967,7 +1050,7 @@ class _DeudasScreenState extends State<DeudasScreen> {
                   borderRadius: BorderRadius.circular(2),
                   child: LinearProgressIndicator(
                     value: deuda.porcentajePagado,
-                    minHeight: 1,
+                    minHeight: 2,
                     backgroundColor: Colors.grey.withValues(alpha: 0.15),
                     valueColor: const AlwaysStoppedAnimation<Color>(
                       AppColors.primary,
@@ -985,8 +1068,10 @@ class _DeudasScreenState extends State<DeudasScreen> {
                         color: Colors.grey.shade600,
                       ),
                     ),
+                    // Etiquetado claro: es la cuota mínima de referencia
+                    // declarada por el banco, NO un cálculo de la app.
                     Text(
-                      'Cuota ${_fmt.format(deuda.cuotaMensual)}/mes',
+                      'Cuota mínima ${_fmt.format(deuda.cuotaMensual)}/mes',
                       style: TextStyle(
                         fontSize: 11,
                         color: Colors.grey.shade500,
@@ -995,8 +1080,9 @@ class _DeudasScreenState extends State<DeudasScreen> {
                   ],
                 ),
 
-                // Proyección — contexto neutro.
-                if (detalle != null) ...[
+                // Proyección por deuda — solo si el plan general es
+                // confiable. Si no, no inventamos fechas individuales.
+                if (detalle != null && (_result?.planConfiable ?? false)) ...[
                   const SizedBox(height: 10),
                   Row(
                     children: [
@@ -1029,6 +1115,67 @@ class _DeudasScreenState extends State<DeudasScreen> {
         ),
       );
     }).toList();
+  }
+
+  // ── Sección plegable: Deudas saldadas (historial de logros) ───
+  Widget _buildSeccionSaldadas() {
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(color: Colors.grey.withValues(alpha: 0.12)),
+      ),
+      child: Theme(
+        // Quitar el divisor y el ripple gris del ExpansionTile.
+        data: Theme.of(context).copyWith(
+          dividerColor: Colors.transparent,
+        ),
+        child: ExpansionTile(
+          tilePadding: const EdgeInsets.symmetric(horizontal: 16),
+          initiallyExpanded: _verSaldadas,
+          onExpansionChanged: (v) => setState(() => _verSaldadas = v),
+          leading: Icon(
+            Icons.emoji_events_outlined,
+            color: AppColors.primary,
+            size: 20,
+          ),
+          title: Text(
+            'Deudas saldadas (${_saldadas.length})',
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          children: _saldadas
+              .map((d) => ListTile(
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 0,
+                    ),
+                    leading: const Icon(
+                      Icons.check_circle,
+                      color: AppColors.primary,
+                      size: 18,
+                    ),
+                    title: Text(
+                      d.acreedor,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    subtitle: Text(
+                      'Saldaste ${_fmt.format(d.saldoInicial)}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey.shade600,
+                      ),
+                    ),
+                  ))
+              .toList(),
+        ),
+      ),
+    );
   }
 
   // ── Estado vacío ──────────────────────────────────────────
