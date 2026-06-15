@@ -15,6 +15,17 @@ import 'screens/metas_screen.dart';
 import 'screens/financial_dashboard_screen.dart';
 import 'screens/deudas_screen.dart';
 
+// Nombre de la categoría "Deuda". Es una categoría ESPECIAL: vive en el
+// código, no en la tabla `categorias`, no se puede borrar ni editar desde
+// la gestión de categorías. Solo aparece en el selector cuando hay al
+// menos una deuda activa. Elegirla dispara el selector de deudas, prende
+// el switch "Gasto fijo" sola y guarda el deuda_id en el movimiento.
+//
+// Conceptualmente esta categoría representa una AMORTIZACIÓN de pasivo,
+// no un gasto operativo. Ver MODELO_FINANCIERO.md.
+const String kCategoriaDeuda = 'Deuda';
+const String kEmojiCategoriaDeuda = '💳';
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -155,6 +166,12 @@ class _MyHomePageState extends State<MyHomePage> {
   String? _categoriaSeleccionada;
   String _textoBusqueda = '';
 
+  // Vínculo del movimiento con una deuda específica (amortización).
+  // Solo se setea cuando la categoría es 'Deuda' y el usuario eligió
+  // a qué deuda apuntar.
+  int? _deudaIdSeleccionada;
+  String? _deudaSeleccionadaNombre;
+
   // Nombre del usuario para el saludo del header (de PreferencesService).
   String? _nombreUsuario;
 
@@ -190,13 +207,19 @@ class _MyHomePageState extends State<MyHomePage> {
   double get totalIngresos =>
       ingresosFiltrados.fold(0.0, (sum, m) => sum + (m['valor'] as num));
 
-  // FIX #7 y #8: totalGastos excluye deudas para no inflar el ratio y el insight
+  // Total de GASTOS OPERATIVOS — excluye amortizaciones (movimientos con
+  // deuda_id) según el MODELO_FINANCIERO.md. También sigue excluyendo
+  // el flag viejo `es_deuda` por compatibilidad con datos previos.
   double get totalGastos => gastosFiltrados
-      .where((m) => m['es_deuda'] != 1)
+      .where((m) => m['es_deuda'] != 1 && m['deuda_id'] == null)
       .fold(0.0, (sum, m) => sum + (m['valor'] as num));
 
+  // Total de AMORTIZACIONES — pagos vinculados a deudas. Se muestran en
+  // su propia columna "Deudas" del resumen, separados de los gastos
+  // operativos. Incluye los viejos (`es_deuda = 1`) y los nuevos
+  // (`deuda_id != null`) para que la transición sea transparente.
   double get totalDeudas => gastosFiltrados
-      .where((m) => m['es_deuda'] == 1)
+      .where((m) => m['es_deuda'] == 1 || m['deuda_id'] != null)
       .fold(0.0, (sum, m) => sum + (m['valor'] as num));
 
   double get balance => totalIngresos - totalGastos - totalDeudas;
@@ -279,6 +302,10 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   String _obtenerEmoji(String nombreCategoria) {
+    // Caso especial: la categoría "Deuda" vive en código, no en la
+    // tabla, así que su emoji se resuelve directo acá.
+    if (nombreCategoria == kCategoriaDeuda) return kEmojiCategoriaDeuda;
+
     final categoriaEncontrada = categorias.firstWhere(
       (cat) => cat['nombre'] == nombreCategoria,
       orElse: () => {},
@@ -552,8 +579,19 @@ class _MyHomePageState extends State<MyHomePage> {
   // La UI (toggle, monto protagonista, selector de categoría, switch fijo,
   // formato de miles) es idéntica en ambos modos — esa es la razón de
   // unificar: un solo diseño que mantener.
+  //
+  // Cuando la categoría seleccionada es "Deuda" (la especial), el switch
+  // "Gasto fijo" se prende solo y queda bloqueado: por contrato del modelo
+  // financiero, una amortización siempre es gasto fijo.
   void _mostrarFormularioMovimiento({Map<String, dynamic>? existente}) {
     final bool esEdicion = existente != null;
+
+    // El deuda_id ORIGINAL del movimiento (antes de cualquier edición).
+    // Lo necesitamos para detectar al guardar si el usuario rompió el
+    // vínculo durante la edición y, en ese caso, pedirle confirmación
+    // para eliminar el movimiento (ver MODELO_FINANCIERO.md).
+    final int? deudaIdOriginal =
+        esEdicion ? existente['deuda_id'] as int? : null;
 
     // Pre-cargar estado según el modo.
     if (esEdicion) {
@@ -563,12 +601,20 @@ class _MyHomePageState extends State<MyHomePage> {
           MilesInputFormatter.format((existente['valor'] as num).toDouble());
       _descController.text = existente['descripcion'] ?? '';
       _esFijo = existente['es_fijo'] == 1;
+      _deudaIdSeleccionada = existente['deuda_id'] as int?;
+      // El nombre de la deuda lo resolvemos asincrónico abajo si hace falta.
+      _deudaSeleccionadaNombre = null;
+      if (_deudaIdSeleccionada != null) {
+        _resolverNombreDeuda(_deudaIdSeleccionada!);
+      }
     } else {
       _descController.clear();
       _valorController.clear();
       _tipoSeleccionado = null;
       _categoriaSeleccionada = null;
       _esFijo = false;
+      _deudaIdSeleccionada = null;
+      _deudaSeleccionadaNombre = null;
     }
 
     showModalBottomSheet(
@@ -588,9 +634,15 @@ class _MyHomePageState extends State<MyHomePage> {
                     ? AppColors.ingreso
                     : Colors.grey;
 
+            final bool esCategoriaDeuda =
+                _categoriaSeleccionada == kCategoriaDeuda;
+
+            // Para guardar: si es categoría Deuda exigimos que haya una
+            // deuda elegida; sino, la deuda no es válida.
             final bool puedeGuardar = _tipoSeleccionado != null &&
                 _categoriaSeleccionada != null &&
-                _valorController.text.isNotEmpty;
+                _valorController.text.isNotEmpty &&
+                (!esCategoriaDeuda || _deudaIdSeleccionada != null);
 
             return Padding(
               padding: EdgeInsets.only(
@@ -648,6 +700,13 @@ class _MyHomePageState extends State<MyHomePage> {
                             onTap: () => setModalState(() {
                               _tipoSeleccionado = 'ingreso';
                               _esFijo = false; // fijo no aplica a ingresos
+                              // Cambiar a ingreso limpia cualquier vínculo
+                              // con deuda; no tiene sentido.
+                              if (_categoriaSeleccionada == kCategoriaDeuda) {
+                                _categoriaSeleccionada = null;
+                              }
+                              _deudaIdSeleccionada = null;
+                              _deudaSeleccionadaNombre = null;
                             }),
                           ),
                         ),
@@ -768,6 +827,61 @@ class _MyHomePageState extends State<MyHomePage> {
                       ),
                     ),
 
+                    // ── Fila secundaria: la deuda vinculada ──
+                    // Solo aparece cuando la categoría es "Deuda".
+                    // Muestra a qué deuda apunta este movimiento y permite
+                    // cambiarla con un tap.
+                    if (esCategoriaDeuda) ...[
+                      const SizedBox(height: 8),
+                      InkWell(
+                        borderRadius: BorderRadius.circular(12),
+                        onTap: () => _abrirSelectorDeudas(setModalState),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 13,
+                          ),
+                          decoration: BoxDecoration(
+                            color: AppColors.deuda.withValues(alpha: 0.06),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: AppColors.deuda.withValues(alpha: 0.20),
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.credit_card_outlined,
+                                size: 18,
+                                color: AppColors.deuda,
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  _deudaSeleccionadaNombre ??
+                                      'Selecciona la deuda a pagar',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    color: _deudaSeleccionadaNombre != null
+                                        ? const Color(0xFF333333)
+                                        : Colors.grey.shade500,
+                                    fontWeight: _deudaSeleccionadaNombre != null
+                                        ? FontWeight.w500
+                                        : FontWeight.normal,
+                                  ),
+                                ),
+                              ),
+                              Icon(
+                                Icons.keyboard_arrow_down,
+                                size: 18,
+                                color: Colors.grey.shade500,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+
                     const SizedBox(height: 10),
 
                     // ── Descripción ──
@@ -799,6 +913,10 @@ class _MyHomePageState extends State<MyHomePage> {
                     ),
 
                     // ── Switch gasto fijo (solo en gasto) ──
+                    // Cuando la categoría es "Deuda", el switch queda
+                    // prendido y NO editable: por contrato del modelo, una
+                    // amortización es siempre gasto fijo. La etiqueta
+                    // cambia para que el usuario entienda el porqué.
                     if (_tipoSeleccionado == 'gasto') ...[
                       const SizedBox(height: 8),
                       Padding(
@@ -817,7 +935,9 @@ class _MyHomePageState extends State<MyHomePage> {
                                   ),
                                 ),
                                 Text(
-                                  'Se repite cada mes',
+                                  esCategoriaDeuda
+                                      ? 'Pago de deuda · automático'
+                                      : 'Se repite cada mes',
                                   style: TextStyle(
                                     fontSize: 11,
                                     color: Colors.grey.shade400,
@@ -827,7 +947,9 @@ class _MyHomePageState extends State<MyHomePage> {
                             ),
                             Switch(
                               value: _esFijo,
-                              onChanged: (v) => setModalState(() => _esFijo = v),
+                              onChanged: esCategoriaDeuda
+                                  ? null
+                                  : (v) => setModalState(() => _esFijo = v),
                             ),
                           ],
                         ),
@@ -850,7 +972,10 @@ class _MyHomePageState extends State<MyHomePage> {
                           ),
                         ),
                         onPressed: puedeGuardar
-                            ? () => _persistirMovimiento(existente: existente)
+                            ? () => _persistirMovimiento(
+                                  existente: existente,
+                                  deudaIdOriginal: deudaIdOriginal,
+                                )
                             : null,
                         child: Text(
                           esEdicion
@@ -876,11 +1001,70 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   // Persiste el movimiento: INSERT si es nuevo, UPDATE si trae `existente`.
-  Future<void> _persistirMovimiento({Map<String, dynamic>? existente}) async {
+  //
+  // Caso especial — edición que ROMPE el vínculo con una deuda: si el
+  // movimiento tenía `deudaIdOriginal` y ahora el `deuda_id` es null o
+  // cambió, según el MODELO_FINANCIERO.md el movimiento perdió su razón
+  // de ser. La política es eliminarlo, con confirmación explícita al
+  // usuario antes.
+  Future<void> _persistirMovimiento({
+    Map<String, dynamic>? existente,
+    int? deudaIdOriginal,
+  }) async {
     final valor = MilesInputFormatter.parse(_valorController.text);
     if (valor == null ||
         _tipoSeleccionado == null ||
         _categoriaSeleccionada == null) return;
+
+    // Detección de "vínculo roto" en edición.
+    final bool rompioVinculo = existente != null &&
+        deudaIdOriginal != null &&
+        _deudaIdSeleccionada != deudaIdOriginal;
+
+    if (rompioVinculo) {
+      final confirmar = await showDialog<bool>(
+        context: context,
+        builder: (dialogCtx) => AlertDialog(
+          title: const Text('Romper vínculo con la deuda'),
+          content: const Text(
+            'Este movimiento estaba vinculado a una deuda. '
+            'Si confirmás, el movimiento se elimina y el saldo vuelve '
+            'a esa deuda. ¿Confirmás?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogCtx, false),
+              child: const Text('Cancelar'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(dialogCtx, true),
+              child: Text(
+                'Eliminar',
+                style: TextStyle(color: AppColors.gasto),
+              ),
+            ),
+          ],
+        ),
+      );
+
+      if (confirmar != true) return; // cancelado: no hago nada.
+
+      // Confirmado: elimino el movimiento. El saldo de la deuda se
+      // recompondrá solo cuando el motor pase a calcular saldos desde
+      // movimientos (Paso 5). Por ahora basta con eliminar.
+      await DatabaseHelper.instance
+          .eliminarMovimiento(existente['id'] as int);
+      if (!mounted) return;
+      Navigator.pop(context);
+      await _cargarMovimientos();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Movimiento eliminado · saldo devuelto a la deuda'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
 
     final datos = {
       'tipo': _tipoSeleccionado,
@@ -888,8 +1072,12 @@ class _MyHomePageState extends State<MyHomePage> {
       'descripcion': _descController.text,
       'valor': valor,
       'es_fijo': _esFijo ? 1 : 0,
+      // Flag viejo del modelo anterior: lo dejamos en 0 para los
+      // movimientos nuevos. Los pagos de deuda se distinguen ahora por
+      // `deuda_id`, no por este flag. Ver MODELO_FINANCIERO.md.
       'es_deuda': 0,
       'acreedor': null,
+      'deuda_id': _deudaIdSeleccionada,
     };
 
     if (existente != null) {
@@ -923,7 +1111,15 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   // Selector de categoría como bottom sheet secundario.
+  //
+  // Si hay deudas activas y el tipo es "gasto", la categoría especial
+  // "Deuda" aparece arriba del todo, destacada visualmente. Al elegirla
+  // se cierra este sheet y se abre el de selección de deuda; el resto
+  // del flujo lo maneja `_abrirSelectorDeudas`.
   void _abrirSelectorCategoria(StateSetter setModalState) {
+    final bool mostrarCategoriaDeuda =
+        _tipoSeleccionado == 'gasto' && _deudasActivas > 0;
+
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
@@ -951,23 +1147,154 @@ class _MyHomePageState extends State<MyHomePage> {
               ),
               const SizedBox(height: 8),
               Flexible(
+                child: ListView(
+                  shrinkWrap: true,
+                  children: [
+                    // Categoría especial "Deuda" — solo cuando aplica.
+                    if (mostrarCategoriaDeuda)
+                      _ItemCategoriaDeuda(
+                        seleccionada:
+                            _categoriaSeleccionada == kCategoriaDeuda,
+                        onTap: () {
+                          Navigator.of(sheetContext).pop();
+                          // Abrimos el selector de deudas; ese se encarga
+                          // de setear la categoría y la deuda elegida.
+                          _abrirSelectorDeudas(setModalState);
+                        },
+                      ),
+                    if (mostrarCategoriaDeuda)
+                      const Divider(height: 1, indent: 16, endIndent: 16),
+
+                    // Resto de categorías normales.
+                    ...categorias.map((cat) {
+                      final seleccionada =
+                          _categoriaSeleccionada == cat['nombre'];
+                      return ListTile(
+                        leading: Text(
+                          cat['emoji'],
+                          style: const TextStyle(fontSize: 22),
+                        ),
+                        title: Text(cat['nombre']),
+                        trailing: seleccionada
+                            ? Icon(Icons.check,
+                                color: AppColors.primary, size: 20)
+                            : null,
+                        onTap: () {
+                          // Cambiar a una categoría normal limpia el
+                          // vínculo a deuda (la categoría dejó de ser
+                          // "Deuda" y el switch fijo vuelve a ser
+                          // editable la próxima vez que se evalúe).
+                          setModalState(() {
+                            _categoriaSeleccionada = cat['nombre'];
+                            _deudaIdSeleccionada = null;
+                            _deudaSeleccionadaNombre = null;
+                          });
+                          Navigator.of(sheetContext).pop();
+                        },
+                      );
+                    }),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // Selector de deuda — lista de deudas activas para vincular el pago.
+  // Si el usuario elige una, la categoría se setea a "Deuda" y el switch
+  // "Gasto fijo" se prende automáticamente.
+  Future<void> _abrirSelectorDeudas(StateSetter setModalState) async {
+    final deudas = await DatabaseHelper.instance.obtenerDeudas();
+
+    if (!mounted) return;
+
+    if (deudas.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No tenés deudas activas para vincular.'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    await showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const Text(
+                '¿A qué deuda va este pago?',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 8),
+              Flexible(
                 child: ListView.builder(
                   shrinkWrap: true,
-                  itemCount: categorias.length,
+                  itemCount: deudas.length,
                   itemBuilder: (context, index) {
-                    final cat = categorias[index];
-                    final seleccionada = _categoriaSeleccionada == cat['nombre'];
+                    final d = deudas[index];
+                    final acreedor = d['acreedor'] as String;
+                    final saldo = (d['saldo_actual'] as num).toDouble();
+                    final id = d['id'] as int;
+                    final seleccionada = _deudaIdSeleccionada == id;
+
                     return ListTile(
-                      leading: Text(
-                        cat['emoji'],
-                        style: const TextStyle(fontSize: 22),
+                      leading: Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: AppColors.deuda.withValues(alpha: 0.10),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Icon(
+                          Icons.credit_card_outlined,
+                          color: AppColors.deuda,
+                          size: 20,
+                        ),
                       ),
-                      title: Text(cat['nombre']),
+                      title: Text(
+                        acreedor,
+                        style: const TextStyle(fontWeight: FontWeight.w500),
+                      ),
+                      subtitle: Text(
+                        'Saldo ${_formatoMoneda.format(saldo)}',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
                       trailing: seleccionada
-                          ? Icon(Icons.check, color: AppColors.primary, size: 20)
+                          ? Icon(Icons.check,
+                              color: AppColors.primary, size: 20)
                           : null,
                       onTap: () {
-                        setModalState(() => _categoriaSeleccionada = cat['nombre']);
+                        setModalState(() {
+                          _categoriaSeleccionada = kCategoriaDeuda;
+                          _deudaIdSeleccionada = id;
+                          _deudaSeleccionadaNombre = acreedor;
+                          _esFijo = true; // amortización = gasto fijo.
+                        });
                         Navigator.of(sheetContext).pop();
                       },
                     );
@@ -980,6 +1307,23 @@ class _MyHomePageState extends State<MyHomePage> {
         );
       },
     );
+  }
+
+  // Resuelve el nombre del acreedor a partir del deuda_id. Se llama una
+  // sola vez al abrir el formulario en modo edición si el movimiento
+  // tenía un vínculo a deuda.
+  Future<void> _resolverNombreDeuda(int deudaId) async {
+    final deudas = await DatabaseHelper.instance.obtenerTodasLasDeudas();
+    final encontrada = deudas.firstWhere(
+      (d) => d['id'] == deudaId,
+      orElse: () => {},
+    );
+    if (!mounted) return;
+    if (encontrada.isNotEmpty) {
+      setState(() {
+        _deudaSeleccionadaNombre = encontrada['acreedor'] as String?;
+      });
+    }
   }
 
   // ===========================
@@ -1106,6 +1450,22 @@ class _MyHomePageState extends State<MyHomePage> {
                             const SnackBar(
                               content: Text('Completa el nombre y el emoji.'),
                               duration: Duration(seconds: 2),
+                            ),
+                          );
+                          return;
+                        }
+
+                        // Bloquear que el usuario intente crear una
+                        // categoría llamada "Deuda" — ya existe como
+                        // especial y vive en código.
+                        if (_nombreCategoriaController.text.trim() ==
+                            kCategoriaDeuda) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'La categoría "Deuda" es del sistema y no se puede duplicar.',
+                              ),
+                              duration: Duration(seconds: 3),
                             ),
                           );
                           return;
@@ -2115,6 +2475,74 @@ class _ToggleTipo extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+// ===========================
+// ITEM DE CATEGORÍA "DEUDA" — destacado, va arriba en el selector
+// ===========================
+class _ItemCategoriaDeuda extends StatelessWidget {
+  final bool seleccionada;
+  final VoidCallback onTap;
+
+  const _ItemCategoriaDeuda({
+    required this.seleccionada,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: AppColors.deuda.withValues(alpha: 0.05),
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Row(
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: AppColors.deuda.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Center(
+                  child: Text(
+                    kEmojiCategoriaDeuda,
+                    style: TextStyle(fontSize: 18),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Deuda',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    SizedBox(height: 2),
+                    Text(
+                      'Pago de cuota a una deuda activa',
+                      style: TextStyle(fontSize: 11, color: Colors.grey),
+                    ),
+                  ],
+                ),
+              ),
+              if (seleccionada)
+                Icon(Icons.check, color: AppColors.primary, size: 20)
+              else
+                const Icon(Icons.chevron_right, color: Colors.grey, size: 20),
+            ],
+          ),
         ),
       ),
     );
