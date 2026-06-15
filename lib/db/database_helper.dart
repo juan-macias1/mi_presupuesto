@@ -44,8 +44,8 @@ class DatabaseHelper {
     final path = join(await getDatabasesPath(), 'presupuesto.db');
     return await openDatabase(
       path,
-      // v4: agrega tabla deudas
-      version: 4,
+      // v5: agrega deuda_id en movimientos para vincular pagos a deudas.
+      version: 5,
       onCreate: _createDB,
       onUpgrade: _onUpgrade,
     );
@@ -63,7 +63,8 @@ class DatabaseHelper {
         fecha TEXT,
         es_fijo INTEGER DEFAULT 0,
         es_deuda INTEGER DEFAULT 0,
-        acreedor TEXT
+        acreedor TEXT,
+        deuda_id INTEGER REFERENCES deudas(id) ON DELETE SET NULL
       )
     ''');
 
@@ -87,7 +88,7 @@ class DatabaseHelper {
       )
     ''');
 
-    // Nueva tabla deudas — saldos reales, no cuotas acumuladas
+    // Tabla deudas — saldos reales, no cuotas acumuladas.
     await db.execute('''
       CREATE TABLE deudas (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -150,6 +151,18 @@ class DatabaseHelper {
           orden_pago INTEGER DEFAULT 0
         )
       ''');
+    }
+
+    // v4 → v5: vínculo entre movimiento y deuda.
+    // Cuando registro un pago de cuota como gasto, lo apunto a la deuda
+    // que estoy pagando con `deuda_id`. El saldo de la deuda se calcula
+    // como saldo_inicial − suma de movimientos vinculados (no se guarda).
+    // Los movimientos viejos quedan con deuda_id = NULL, sin perder nada.
+    if (oldVersion < 5) {
+      await db.execute(
+        "ALTER TABLE movimientos ADD COLUMN deuda_id INTEGER "
+        "REFERENCES deudas(id) ON DELETE SET NULL",
+      );
     }
   }
 
