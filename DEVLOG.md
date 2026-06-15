@@ -412,3 +412,61 @@ Convertir el dashboard de una lista plana de secciones apiladas en una jerarquí
 - Sigue en pausa BEHAVIOR_DESIGN.md
 
 ---
+
+## 2026-06-15 — Cascada en pantalla, base para vincular pagos con deudas, y la decisión del modelo financiero
+
+**Tiempo invertido:** 3 horas
+**Fase:** Cascada en pantalla + arranque del vínculo deuda-gasto + decisión de modelo
+
+### Objetivo
+
+Cerrar la cascada de razonamiento llevándola a la pantalla, y empezar a usar la app con datos reales por primera vez. La premisa era simple: si la pensé como copiloto, tengo que pasar por la fricción de vivirla como usuario, no solo construirla como desarrollador.
+
+Lo que no estaba en el plan al arrancar el día, y terminó siendo lo más importante: descubrir, usándola, un agujero conceptual del modelo de datos y resolverlo escribiéndolo como documento antes de tocar más código.
+
+### Trabajo realizado
+
+1. **Cascada cableada en la puerta "Lo que hago este mes"** (`e72c12e`). Implementé el waterfall en el dashboard a partir del mockup que validé antes de codificar. Lo escribí adaptativo de entrada: cada renglón aparece solo si tiene valor —si no hay cuotas, "Pago mis cuotas" no se muestra; si no hay subsistencia cargada, tampoco "Como y me muevo"— y los destinos del 10% y del margen los decide el motor según el modo, no están escritos a mano. La caja final del margen va en verde si sobra, en rojo si falta. La distribución del excedente, que ya existía, quedó debajo como detalle.
+
+2. **Migración v5 de la base de datos** (`2a5359c`). Subí la versión de SQLite de 4 a 5 y agregué la columna `deuda_id` a la tabla `movimientos`, con `ON DELETE SET NULL` para que un movimiento sobreviva si se borra la deuda asociada. Migración aditiva, invisible para el usuario: la app sigue comportándose igual, pero la base ya tiene el campo listo. Antes de mover el archivo respaldé la base de datos del dispositivo con `adb` para tener vuelta atrás —disciplina, no necesidad: agregar una columna con default NULL es la operación más segura de SQLite—.
+
+3. **Campo `deudaId` en el modelo Movimiento** (`c432aa5`). Agregué el campo opcional al modelo y lo cableé en `fromMap`, `toMap`, `toMapForUpdate` y `copyWith`. Saqué el `assert(!(esDeuda && esFijo))` que venía del modelo viejo y chocaba con la decisión nueva: una cuota de deuda es un gasto fijo mensual, las dos cosas a la vez son legítimas. Otro paso invisible para el usuario, pendiente de encenderse desde el formulario.
+
+4. **El paso que cambió la sesión: la decisión del modelo financiero** (`6415cb8`). Cargando mis deudas reales para empezar a usar la app, encontré algo que no era un bug suelto. Pensando "qué pasa si edito un pago y le saco el vínculo a la deuda", terminé articulando que un pago de cuota no es lo mismo que un gasto operativo. Toca la liquidez igual —sale plata del bolsillo—, pero no es consumo: es reducción de un pasivo. La app los trataba igual y eso explicaba por qué los ratios se inflaban y las recomendaciones se sentían descalibradas. En vez de seguir codificando con esa contradicción adentro, escribí `MODELO_FINANCIERO.md` como contrato: definiciones de ingreso, gasto operativo y amortización; la regla operativa que decide qué es qué (presencia o no de `deuda_id`); qué pasa cuando se rompe el vínculo (la app borra el movimiento avisando antes); y cómo se refleja en cada parte de la app —cascada, score, ratios, fugas, pantalla de Deudas, saldo de cada deuda—. El doc también declara explícitamente lo que dejo fuera de v1 (separar capital de intereses, sugerencias automáticas, aportes a metas como amortización inversa), para que no parezcan olvidos.
+
+### Lo que funcionó
+
+- Validar el mockup del waterfall antes de codificarlo. La forma quedó alineada con la cascada que había diseñado por dentro, sin idas y vueltas en el código.
+- Escribirla adaptativa desde el primer commit en vez de hardcodear renglones. La conversación que tuve mientras la diseñaba —"esto no es dogma; pagar cuotas no siempre va a estar"— me forzó a evitar el atajo de mostrar siempre los mismos campos. Hoy el código respeta esa decisión sin parches.
+- Usar la app con datos reales fue el verdadero disparador. La distinción entre gasto operativo y amortización no salió de leer libros ni de pensarla en abstracto; salió del momento concreto de pagar una cuota y ver el dashboard inflado.
+- Escribir el modelo antes de seguir tocando código. La tentación era cablear el formulario y "después arreglamos". Frenar y documentar fija el criterio y evita parchar más adelante.
+- Respaldar la base de datos antes de la migración. No la necesité, pero el reflejo de hacerlo cuenta como disciplina.
+
+### Lo que falló y cómo se resolvió
+
+- `adb` no estaba en el PATH del sistema en Windows. Lo encontré en la ruta del Android SDK que instala Flutter y lo invoqué con la ruta completa usando la sintaxis `&` de PowerShell. Quedó como aprendizaje portable: los binarios del SDK están todos ahí, no hace falta tocar PATH para una operación puntual.
+- Al leer el modelo `Movimiento` apareció un descubrimiento incómodo: ya había un sistema de deudas anterior, abandonado a medio camino, con campos (`es_deuda`, `acreedor`) que el código preservaba pero los motores ignoraban. Estaba por agregar el vínculo nuevo encima sin tocar lo viejo. Lo frené, dejé los campos viejos donde estaban para no abrir otro frente, y anoté la limpieza como un commit aparte para más adelante. La decisión consciente fue elegir destrabar el problema real (vincular deuda con gasto) antes que pulir lo abandonado.
+- Casi tomo una decisión de UX en silencio que no era trivial. Cuando pregunté "qué pasa si saco el switch fijo a un movimiento vinculado a deuda" propuse desvincular en silencio. La respuesta fue una pregunta mejor: "entonces esos $400.000, ¿qué representan en los movimientos?". Esa pregunta destapó que no era una decisión de UX, era una decisión de modelo. Tuve que parar, descartar la solución original, y replantear todo el alcance.
+
+### Lecciones aprendidas
+
+- Usar el propio producto produce decisiones de modelo, no solo bugs visuales. La diferencia entre gasto operativo y amortización no se me había ocurrido en cinco meses de construirla; apareció en la primera semana de usarla con plata real.
+- Un mockup acordado antes del código baja la fricción de revisión a casi cero. Lo crucial fue acordar la **forma adaptativa** —qué se muestra cuándo, qué desaparece si vale cero—, no solo cómo se veía el caso típico.
+- Frenar para escribir un documento de modelo, cuando aparece una contradicción, es más rápido a la larga que codificar la contradicción y parcharla después. Las dos horas de discusión que terminaron en `MODELO_FINANCIERO.md` ahorran probablemente diez horas de bugs futuros y rediseños.
+- El switch "Gasto fijo" y la condición de "pago de cuota" son ortogonales. Hasta hoy las tenía mezcladas en un mismo flag binario; separarlas con el `deuda_id` resuelve casos que no podía resolver con la estructura anterior.
+- Las migraciones aditivas son seguras y discretas: agregar una columna con default NULL no toca filas existentes ni rompe nada, pero deja la pista lista para el próximo paso. Hacer el respaldo igual, aun sabiendo eso, es disciplina y vale como hábito.
+
+### Métricas
+
+- Commits del día: `e72c12e` (cascada en pantalla), `2a5359c` (migración v5), `c432aa5` (campo deudaId en movimiento), `6415cb8` (MODELO_FINANCIERO.md).
+- Archivos modificados: `financial_dashboard_screen.dart`, `db/database_helper.dart`, `models/movimiento.dart`. Nuevos: `MODELO_FINANCIERO.md`.
+- Estado de flutter analyze al cierre del día: 0 errores, 0 warnings, 29 info (style-only, sin cambios).
+- Estado del repo: 26 commits, base de datos lista para amortizaciones, modelo documentado.
+
+### Próximos pasos
+
+- Cablear el selector de deuda en el formulario de movimiento (`main.dart`): cuando es gasto + fijo y hay deudas activas, ofrecer vincular a una deuda. Con confirmación explícita al romper el vínculo durante una edición.
+- Rediseñar la pantalla de Deudas sobre el modelo nuevo: saldo calculado en vivo desde los movimientos vinculados, historial de pagos por deuda, y aplicar el formatter de miles también acá (era una de las fricciones de la bitácora).
+- Reconciliar el motor con el `MODELO_FINANCIERO.md`: separar gastos operativos de amortizaciones en todos los cálculos del brain (ratio de gasto, fugas, score, cascada).
+- Arreglar la calculadora del módulo de deudas, que dejé anotada como fricción y no atacamos en esta sesión.
+- Pasada al README: corregir el estado de la integración con Claude API, decidir qué hacer con los archivos pendientes referenciados como "forthcoming", y agregar al menos una captura del dashboard rediseñado.
